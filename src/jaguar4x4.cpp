@@ -14,7 +14,9 @@
 
 #include <chrono>
 #include "rclcpp/rclcpp.hpp"
+#include "rcutils/logging_macros.h"
 #include "std_msgs/msg/string.hpp"
+
 #include "DrRobotMotionSensorDriver.hpp"
 
 using namespace std::chrono_literals;
@@ -32,14 +34,21 @@ public:
     publisher_ = this->create_publisher<std_msgs::msg::String>("topic");
     timer_ = this->create_wall_timer(
       500ms, std::bind(&Jaguar4x4::timer_callback, this));
+
     struct DrRobotMotionConfig motionConfig;
     std::string str("192.168.0.60");
-    str.copy(motionConfig.robotIP,0);
+    str.copy(motionConfig.robotIP, str.length());
+    motionConfig.robotIP[str.length()]='\0';
     motionConfig.portNum=10001;
     motionConfig.commMethod = Network;
     motionConfig.robotType = Jaguar;
 
     sensorDriver.setDrRobotMotionDriverConfig(&motionConfig);
+
+    int ret = sensorDriver.openNetwork(motionConfig.robotIP, motionConfig.portNum);
+    if (ret) {
+      RCLCPP_WARN(get_logger(), "openNetwork failed %s", motionConfig.robotIP);
+    }
   }
 
 private:

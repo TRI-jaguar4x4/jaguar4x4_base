@@ -17,7 +17,11 @@ string ( const string& str, size_t pos, size_t n = npos );
 /*
  * rewrite... split into comms and msg
  * get rid of boost
+ * start/stop... need to implement this in main
  */
+
+#include "rclcpp/rclcpp.hpp"
+#include "rcutils/logging_macros.h"
 
 #include "DrRobotMotionSensorDriver.hpp"
 
@@ -69,7 +73,7 @@ DrRobot_MotionSensorDriver::DrRobotMotionSensorDriver::DrRobotMotionSensorDriver
   _serialfd = -1;
 
   _tv.tv_sec = 0;
-  _tv.tv_usec = 5;             //200us ?
+  _tv.tv_usec = 50000;             //200us ?
 
   _stopComm = true;
   _comCnt = 0;
@@ -862,6 +866,9 @@ void DrRobot_MotionSensorDriver::DrRobotMotionSensorDriver::handleComData(const 
     int nStartIndex, nUnProcessedPacketLen, nPacketIndex;
     char* unProcessedPacket = NULL;
 
+    //    RCLCPP_INF(get_logger(), "receiving data - yippee!");
+    fprintf(stderr,"receiving data - yippee\n");
+    
     nStartIndex = 0;
     nPacketIndex = 0;
 
