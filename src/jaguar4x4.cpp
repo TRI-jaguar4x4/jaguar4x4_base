@@ -32,6 +32,14 @@ public:
     publisher_ = this->create_publisher<std_msgs::msg::String>("topic");
     timer_ = this->create_wall_timer(
       500ms, std::bind(&Jaguar4x4::timer_callback, this));
+    struct DrRobotMotionConfig motionConfig;
+    std::string str("192.168.0.60");
+    str.copy(motionConfig.robotIP,0);
+    motionConfig.portNum=10001;
+    motionConfig.commMethod = Network;
+    motionConfig.robotType = Jaguar;
+
+    sensorDriver.setDrRobotMotionDriverConfig(&motionConfig);
   }
 
 private:
