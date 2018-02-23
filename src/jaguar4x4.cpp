@@ -16,6 +16,7 @@
 #include "rclcpp/rclcpp.hpp"
 #include "rcutils/logging_macros.h"
 #include "std_msgs/msg/string.hpp"
+#include "sensor_msgs/msg/imu.hpp"
 
 #include "DrRobotMotionSensorDriver.hpp"
 
@@ -49,6 +50,8 @@ public:
     if (ret) {
       RCLCPP_WARN(get_logger(), "openNetwork failed %s", motionConfig.robotIP);
     }
+
+    imuPub = this->create_publisher<sensor_msgs::msg::Imu>("imu");
   }
 
 private:
@@ -58,11 +61,39 @@ private:
     message.data = "Hello, world! " + std::to_string(count_++);
     RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str())
     publisher_->publish(message);
+
+    struct MotorSensorData motorSensorData_;
+    struct MotorBoardData motorBoardData_;
+    struct IMUSensorData imuSensorData_;
+    struct GPSSensorData gpsSensorData_;
+    sensorDriver.readMotorSensorData(&motorSensorData_);
+    sensorDriver.readMotorBoardData(&motorBoardData_);
+    sensorDriver.readIMUSensorData(&imuSensorData_);
+    sensorDriver.readGPSSensorData(&gpsSensorData_);
+    RCLCPP_INFO(this->get_logger(), "YAW: %f\n", imuSensorData_.yaw);
+    rcutils_time_point_value_t now;
+    rcutils_system_time_now(&now);
+    auto imu_msg = std::make_shared<sensor_msgs::msg::Imu>();
+    imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
+    imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
+    imu_msg->orientation.x = 0.0;
+    imu_msg->orientation.y = 0.0;
+    imu_msg->orientation.z = 0.0;
+    imu_msg->orientation.w = 0.0;
+    imu_msg->angular_velocity.x = 0.0;
+    imu_msg->angular_velocity.y = 0.0;
+    imu_msg->angular_velocity.z = 0.0;
+    imu_msg->linear_acceleration.x = 0.0;
+    imu_msg->linear_acceleration.y = 0.0;
+    imu_msg->linear_acceleration.z = 9.8;
+    // don't know covariances, they're defaulting to 0
+    imuPub->publish(imu_msg);
   }
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
   size_t count_;
   DrRobotMotionSensorDriver sensorDriver;
+  rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub;
 };
 
 int main(int argc, char * argv[])
