@@ -15,21 +15,23 @@
 #include <chrono>
 #include "rclcpp/rclcpp.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "DrRobotMotionSensorDriver.hpp"
 
 using namespace std::chrono_literals;
+using namespace DrRobot_MotionSensorDriver;
 
 /* This example creates a subclass of Node and uses std::bind() to register a
  * member function as a callback from the timer. */
 
-class MinimalPublisher : public rclcpp::Node
+class Jaguar4x4 : public rclcpp::Node
 {
 public:
-  MinimalPublisher()
-  : Node("minimal_publisher"), count_(0)
+  Jaguar4x4()
+  : Node("jaguar4x4"), count_(0)
   {
     publisher_ = this->create_publisher<std_msgs::msg::String>("topic");
     timer_ = this->create_wall_timer(
-      500ms, std::bind(&MinimalPublisher::timer_callback, this));
+      500ms, std::bind(&Jaguar4x4::timer_callback, this));
   }
 
 private:
@@ -43,12 +45,13 @@ private:
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
   size_t count_;
+  DrRobotMotionSensorDriver sensorDriver;
 };
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_shared<MinimalPublisher>());
+  rclcpp::spin(std::make_shared<Jaguar4x4>());
   rclcpp::shutdown();
   return 0;
 }
