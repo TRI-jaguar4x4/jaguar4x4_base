@@ -17,6 +17,8 @@
 #include "rcutils/logging_macros.h"
 #include "std_msgs/msg/string.hpp"
 #include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/nav_sat_status.hpp"
+#include "sensor_msgs/msg/nav_sat_fix.hpp"
 
 #include "DrRobotMotionSensorDriver.hpp"
 
@@ -52,6 +54,7 @@ public:
     }
 
     imuPub = this->create_publisher<sensor_msgs::msg::Imu>("imu");
+    navsatPub = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat");
   }
 
 private:
@@ -70,10 +73,14 @@ private:
     sensorDriver.readMotorBoardData(&motorBoardData_);
     sensorDriver.readIMUSensorData(&imuSensorData_);
     sensorDriver.readGPSSensorData(&gpsSensorData_);
-    RCLCPP_INFO(this->get_logger(), "YAW: %f\n", imuSensorData_.yaw);
+    RCLCPP_INFO(this->get_logger(), "YAW: %f, GPS Status %d\n",
+		imuSensorData_.yaw, gpsSensorData_.gpsStatus);
     rcutils_time_point_value_t now;
     rcutils_system_time_now(&now);
+
     auto imu_msg = std::make_shared<sensor_msgs::msg::Imu>();
+    auto navsat_fix_msg = std::make_shared<sensor_msgs::msg::NavSatFix>();
+
     imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
     imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
     imu_msg->orientation.x = 0.0;
@@ -88,12 +95,36 @@ private:
     imu_msg->linear_acceleration.z = 9.8;
     // don't know covariances, they're defaulting to 0
     imuPub->publish(imu_msg);
+
+    navsat_fix_msg->header.stamp.sec=RCL_NS_TO_S(now);
+    navsat_fix_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
+    switch (gpsSensorData_.gpsStatus) {
+      case -1: // invalid
+	navsat_fix_msg->status.status=sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
+	break;
+      case 0:  // fixed
+	navsat_fix_msg->status.status=sensor_msgs::msg::NavSatStatus::STATUS_FIX;
+	break;
+      case 1:  // differential (assuming satellite based differential - vs ground based)
+	navsat_fix_msg->status.status=sensor_msgs::msg::NavSatStatus::STATUS_SBAS_FIX;
+	break;
+      default:
+        RCLCPP_WARN(get_logger(), "Invalid GPS status %d", gpsSensorData_.gpsStatus);
+	break;
+    }
+    navsat_fix_msg->status.service=sensor_msgs::msg::NavSatStatus::SERVICE_GPS;
+    navsat_fix_msg->latitude = gpsSensorData_.latitude;
+    navsat_fix_msg->longitude = gpsSensorData_.longitude;
+    navsat_fix_msg->altitude = 0.0;
+    navsat_fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
+    navsatPub->publish(navsat_fix_msg);    
   }
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
   size_t count_;
   DrRobotMotionSensorDriver sensorDriver;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub;
+  rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navsatPub;
 };
 
 int main(int argc, char * argv[])
