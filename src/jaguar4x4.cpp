@@ -19,6 +19,8 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
+#include "geometry_msgs/msg/twist.hpp"
+
 #include "jaguar4x4_msgs/msg/motor_board.hpp" // pattern is all lower case name w/ underscores
 #include "DrRobotMotionSensorDriver.hpp"
 
@@ -57,9 +59,27 @@ public:
     navsatPub = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat");
     motorBoardBase1Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase1");
     motorBoardBase2Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase2");
+
+    cmdVelSub = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel",
+								     std::bind(&Jaguar4x4::cmdVelCallback, this, std::placeholders::_1));
+
   }
 
 private:
+  void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
+  {
+    auto message = std_msgs::msg::String();
+    message.data = "Time to operate the robot! " + std::to_string(count_++);
+    RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str())
+
+    // for now, this will hold up publication... move to its own thread
+    std::stringstream ss; 
+    ss << "MMW !MG";
+    sensorDriver.sendCommand("MMW !MG", 7);
+    ss << "MMW !M 200 -200";	
+    sensorDriver.sendCommand("MMW !M 200 -200", 15);       
+  }
+  
   void timer_callback()
   {
     auto message = std_msgs::msg::String();
@@ -142,6 +162,7 @@ private:
     motorBoardBase1Pub->publish(motor_board_base1_msg);
     motorBoardBase2Pub->publish(motor_board_base2_msg);
   }
+
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
   size_t count_;
@@ -150,6 +171,9 @@ private:
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navsatPub;
   rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase1Pub;  // base motor board 1?
   rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase2Pub;  // base motor board 2?
+
+  rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmdVelSub;
+  
 };
 
 int main(int argc, char * argv[])
