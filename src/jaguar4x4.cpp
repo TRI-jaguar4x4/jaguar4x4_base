@@ -87,16 +87,16 @@ private:
     
     imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
     imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
-    imu_msg->orientation.x = 0.0;
-    imu_msg->orientation.y = 0.0;
-    imu_msg->orientation.z = 0.0;
+    imu_msg->orientation.x = imuSensorData_.comp_x; // currently showing RAW magnetic sensor data
+    imu_msg->orientation.y = imuSensorData_.comp_y; // currently showing RAW magnetic sensor data
+    imu_msg->orientation.z = imuSensorData_.comp_z; // currently showing RAW magnetic sensor data
     imu_msg->orientation.w = 0.0;
-    imu_msg->angular_velocity.x = 0.0;
-    imu_msg->angular_velocity.y = 0.0;
-    imu_msg->angular_velocity.z = 0.0;
-    imu_msg->linear_acceleration.x = 0.0;
-    imu_msg->linear_acceleration.y = 0.0;
-    imu_msg->linear_acceleration.z = 9.8;
+    imu_msg->angular_velocity.x = imuSensorData_.gyro_x/14.375; // all of the below are first approximation based on LSB
+    imu_msg->angular_velocity.y = imuSensorData_.gyro_y/14.375;
+    imu_msg->angular_velocity.z = imuSensorData_.gyro_z/14.375;
+    imu_msg->linear_acceleration.x = imuSensorData_.accel_x/32.0;
+    imu_msg->linear_acceleration.y = imuSensorData_.accel_y/32.0;
+    imu_msg->linear_acceleration.z = imuSensorData_.accel_z/32.0;
     // don't know covariances, they're defaulting to 0
 
     // GPS
