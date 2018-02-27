@@ -60,8 +60,19 @@ public:
     motorBoardBase1Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase1");
     motorBoardBase2Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase2");
 
+    // DDS has different quality of service protocols two basic ones...
+    // best_effort and reliable (for reliability).
+    // best_effort can publish to best_effort and reliable can publish to reliable
+    // and a reliable can publish to a reliable, but a best effort cannot publish to a reliable
+    // by default you get a reliable publisher, so to change that, specify a profile
+    rmw_qos_profile_t cmd_vel_qos_profile = rmw_qos_profile_sensor_data;
+    cmd_vel_qos_profile.history = RMW_QOS_POLICY_HISTORY_KEEP_LAST;
+    cmd_vel_qos_profile.depth = 50;
+    cmd_vel_qos_profile.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
+    cmd_vel_qos_profile.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
+ 
     cmdVelSub = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel",
-								     std::bind(&Jaguar4x4::cmdVelCallback, this, std::placeholders::_1));
+								     std::bind(&Jaguar4x4::cmdVelCallback, this, std::placeholders::_1), cmd_vel_qos_profile);
 
   }
 
