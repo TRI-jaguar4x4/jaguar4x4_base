@@ -19,7 +19,7 @@
 #include "sensor_msgs/msg/imu.hpp"
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
-
+#include "jaguar4x4_msgs/msg/motor_board.hpp" // pattern is all lower case name w/ underscores
 #include "DrRobotMotionSensorDriver.hpp"
 
 using namespace std::chrono_literals;
@@ -55,6 +55,8 @@ public:
 
     imuPub = this->create_publisher<sensor_msgs::msg::Imu>("imu");
     navsatPub = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat");
+    motorBoardBase1Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase1");
+    motorBoardBase2Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase2");
   }
 
 private:
@@ -80,7 +82,9 @@ private:
 
     auto imu_msg = std::make_shared<sensor_msgs::msg::Imu>();
     auto navsat_fix_msg = std::make_shared<sensor_msgs::msg::NavSatFix>();
-
+    auto motor_board_base1_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
+    auto motor_board_base2_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
+    
     imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
     imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
     imu_msg->orientation.x = 0.0;
@@ -94,8 +98,8 @@ private:
     imu_msg->linear_acceleration.y = 0.0;
     imu_msg->linear_acceleration.z = 9.8;
     // don't know covariances, they're defaulting to 0
-    imuPub->publish(imu_msg);
 
+    // GPS
     navsat_fix_msg->header.stamp.sec=RCL_NS_TO_S(now);
     navsat_fix_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
     switch (gpsSensorData_.gpsStatus) {
@@ -117,7 +121,26 @@ private:
     navsat_fix_msg->longitude = gpsSensorData_.longitude;
     navsat_fix_msg->altitude = 0.0;
     navsat_fix_msg->position_covariance_type = sensor_msgs::msg::NavSatFix::COVARIANCE_TYPE_UNKNOWN;
-    navsatPub->publish(navsat_fix_msg);    
+
+    // motor boards
+    //motor_board_base1(2)_msg motorBoardData_
+    motor_board_base1_msg->status = motorBoardData_.status[0];
+    motor_board_base2_msg->status = motorBoardData_.status[1];
+    motor_board_base1_msg->temp1 = motorBoardData_.temp2[0];
+    motor_board_base2_msg->temp1 = motorBoardData_.temp2[1];
+    motor_board_base1_msg->temp2 = motorBoardData_.temp3[0];
+    motor_board_base2_msg->temp2 = motorBoardData_.temp3[1];
+    motor_board_base1_msg->volt_main = motorBoardData_.volMain[0];
+    motor_board_base2_msg->volt_main = motorBoardData_.volMain[1];
+    motor_board_base1_msg->volt_12v = motorBoardData_.vol12V[0];
+    motor_board_base2_msg->volt_12v = motorBoardData_.vol12V[1];
+    motor_board_base1_msg->volt_5v = motorBoardData_.vol5V[0];
+    motor_board_base2_msg->volt_5v = motorBoardData_.vol5V[1];    
+      
+    imuPub->publish(imu_msg);
+    navsatPub->publish(navsat_fix_msg);
+    motorBoardBase1Pub->publish(motor_board_base1_msg);
+    motorBoardBase2Pub->publish(motor_board_base2_msg);
   }
   rclcpp::TimerBase::SharedPtr timer_;
   rclcpp::Publisher<std_msgs::msg::String>::SharedPtr publisher_;
@@ -125,6 +148,8 @@ private:
   DrRobotMotionSensorDriver sensorDriver;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navsatPub;
+  rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase1Pub;  // base motor board 1?
+  rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase2Pub;  // base motor board 2?
 };
 
 int main(int argc, char * argv[])

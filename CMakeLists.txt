@@ -15,9 +15,10 @@ find_package(rclcpp REQUIRED)
 find_package(std_msgs REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(Boost REQUIRED COMPONENTS system thread)
+find_package(jaguar4x4_msgs REQUIRED)
 
 add_executable(jaguar4x4_node src/jaguar4x4.cpp src/DrRobotMotionSensorDriver.cpp)
-ament_target_dependencies(jaguar4x4_node rclcpp std_msgs sensor_msgs Boost)
+ament_target_dependencies(jaguar4x4_node rclcpp std_msgs sensor_msgs jaguar4x4_msgs Boost)
 
 install(TARGETS
   jaguar4x4_node
