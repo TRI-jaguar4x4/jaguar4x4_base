@@ -83,8 +83,8 @@ private:
     message.data = "Time to operate the robot! " + std::to_string(count_++);
     RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str());
 
-    float linearX = msg->linear.x*400;
-    float angularZ = msg->angular.z*400;
+    float linearX = msg->linear.x*350;
+    float angularZ = msg->angular.z*700;
     
     // for now, this will hold up publication... move to its own thread
     sensorDriver.sendCommand("MMW !MG", 7);
@@ -92,11 +92,15 @@ private:
       std::stringstream ss; 
       ss << "MMW !M " << linearX << " " << -linearX;
       sensorDriver.sendCommand(ss.str().c_str(), ss.str().length());
-    } else if (angularZ != 0.0) {
+    }
+
+    if (angularZ != 0.0) {
       std::stringstream ss; 
       ss << "MMW !M " << angularZ << " " << angularZ;
       sensorDriver.sendCommand(ss.str().c_str(), ss.str().length());
-    } else { // send stop
+    }
+
+    if (linearX == 0.0 && angularZ == 0.0) { // send stop
       sensorDriver.sendCommand("MMW !EX", 7);
     }
   }
