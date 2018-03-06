@@ -81,7 +81,7 @@ private:
   {
     auto message = std_msgs::msg::String();
     message.data = "Time to operate the robot! " + std::to_string(count_++);
-    RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str());
+    RCLCPP_DEBUG(this->get_logger(), "Publishing: '%s'", message.data.c_str());
 
     float linearX = msg->linear.x*350;
     float angularZ = msg->angular.z*700;
@@ -107,11 +107,6 @@ private:
   
   void timer_callback()
   {
-    auto message = std_msgs::msg::String();
-    message.data = "Hello, world! " + std::to_string(count_++);
-    RCLCPP_INFO(this->get_logger(), "Publishing: '%s'", message.data.c_str())
-    publisher_->publish(message);
-
     struct MotorSensorData motorSensorData_;
     struct MotorBoardData motorBoardData_;
     struct IMUSensorData imuSensorData_;
@@ -120,7 +115,7 @@ private:
     sensorDriver.readMotorBoardData(&motorBoardData_);
     sensorDriver.readIMUSensorData(&imuSensorData_);
     sensorDriver.readGPSSensorData(&gpsSensorData_);
-    RCLCPP_INFO(this->get_logger(), "YAW: %f, GPS Status %d\n",
+    RCLCPP_DEBUG(this->get_logger(), "YAW: %f, GPS Status %d\n",
 		imuSensorData_.yaw, gpsSensorData_.gpsStatus);
     rcutils_time_point_value_t now;
     rcutils_system_time_now(&now);
