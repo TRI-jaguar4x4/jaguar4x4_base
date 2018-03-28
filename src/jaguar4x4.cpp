@@ -1,4 +1,6 @@
-// Copyright 2016 Open Source Robotics Foundation, Inc.
+// Copyright 2018 Toyota Research Institute.  All rights reserved.
+//
+// IF WE RELEASE THIS CODE, WE MAY USE THE FOLLOWING BOILERPLATE:
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -70,7 +72,7 @@ public:
     cmd_vel_qos_profile.depth = 50;
     cmd_vel_qos_profile.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
     cmd_vel_qos_profile.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
- 
+
     cmdVelSub = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel",
 								     std::bind(&Jaguar4x4::cmdVelCallback, this, std::placeholders::_1), cmd_vel_qos_profile);
 
@@ -84,18 +86,18 @@ private:
     RCLCPP_DEBUG(this->get_logger(), "Publishing: '%s'", message.data.c_str());
 
     float linearX = msg->linear.x*350;
-    float angularZ = msg->angular.z*700;
-    
+    float angularZ = msg->angular.z*350;
+
     // for now, this will hold up publication... move to its own thread
     sensorDriver.sendCommand("MMW !MG", 7);
     if (linearX != 0.0) {
-      std::stringstream ss; 
+      std::stringstream ss;
       ss << "MMW !M " << linearX << " " << -linearX;
       sensorDriver.sendCommand(ss.str().c_str(), ss.str().length());
     }
 
     if (angularZ != 0.0) {
-      std::stringstream ss; 
+      std::stringstream ss;
       ss << "MMW !M " << angularZ << " " << angularZ;
       sensorDriver.sendCommand(ss.str().c_str(), ss.str().length());
     }
@@ -104,7 +106,7 @@ private:
       sensorDriver.sendCommand("MMW !EX", 7);
     }
   }
-  
+
   void timer_callback()
   {
     struct MotorSensorData motorSensorData_;
@@ -124,7 +126,7 @@ private:
     auto navsat_fix_msg = std::make_shared<sensor_msgs::msg::NavSatFix>();
     auto motor_board_base1_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
     auto motor_board_base2_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
-    
+
     imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
     imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
     imu_msg->orientation.x = imuSensorData_.comp_x; // currently showing RAW magnetic sensor data
@@ -175,8 +177,8 @@ private:
     motor_board_base1_msg->volt_12v = motorBoardData_.vol12V[0];
     motor_board_base2_msg->volt_12v = motorBoardData_.vol12V[1];
     motor_board_base1_msg->volt_5v = motorBoardData_.vol5V[0];
-    motor_board_base2_msg->volt_5v = motorBoardData_.vol5V[1];    
-      
+    motor_board_base2_msg->volt_5v = motorBoardData_.vol5V[1];
+
     imuPub->publish(imu_msg);
     navsatPub->publish(navsat_fix_msg);
     motorBoardBase1Pub->publish(motor_board_base1_msg);
@@ -193,7 +195,7 @@ private:
   rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase2Pub;  // base motor board 2?
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmdVelSub;
-  
+
 };
 
 int main(int argc, char * argv[])
