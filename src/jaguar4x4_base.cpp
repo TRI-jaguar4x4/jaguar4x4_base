@@ -23,7 +23,7 @@
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "geometry_msgs/msg/twist.hpp"
 
-#include "jaguar4x4_msgs/msg/motor_board.hpp" // pattern is all lower case name w/ underscores
+#include "jaguar4x4_base_msgs/msg/motor_board.hpp" // pattern is all lower case name w/ underscores
 #include "DrRobotMotionSensorDriver.hpp"
 
 using namespace std::chrono_literals;
@@ -59,8 +59,8 @@ public:
 
     imuPub = this->create_publisher<sensor_msgs::msg::Imu>("imu");
     navsatPub = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat");
-    motorBoardBase1Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase1");
-    motorBoardBase2Pub = this->create_publisher<jaguar4x4_msgs::msg::MotorBoard>("motorboardBase2");
+    motorBoardBase1Pub = this->create_publisher<jaguar4x4_base_msgs::msg::MotorBoard>("motorboardBase1");
+    motorBoardBase2Pub = this->create_publisher<jaguar4x4_base_msgs::msg::MotorBoard>("motorboardBase2");
 
     // DDS has different quality of service protocols two basic ones...
     // best_effort and reliable (for reliability).
@@ -124,8 +124,8 @@ private:
 
     auto imu_msg = std::make_shared<sensor_msgs::msg::Imu>();
     auto navsat_fix_msg = std::make_shared<sensor_msgs::msg::NavSatFix>();
-    auto motor_board_base1_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
-    auto motor_board_base2_msg = std::make_shared<jaguar4x4_msgs::msg::MotorBoard>();
+    auto motor_board_base1_msg = std::make_shared<jaguar4x4_base_msgs::msg::MotorBoard>();
+    auto motor_board_base2_msg = std::make_shared<jaguar4x4_base_msgs::msg::MotorBoard>();
 
     imu_msg->header.stamp.sec=RCL_NS_TO_S(now);
     imu_msg->header.stamp.nanosec=now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
@@ -191,8 +191,8 @@ private:
   DrRobotMotionSensorDriver sensorDriver;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr imuPub;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr navsatPub;
-  rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase1Pub;  // base motor board 1?
-  rclcpp::Publisher<jaguar4x4_msgs::msg::MotorBoard>::SharedPtr motorBoardBase2Pub;  // base motor board 2?
+  rclcpp::Publisher<jaguar4x4_base_msgs::msg::MotorBoard>::SharedPtr motorBoardBase1Pub;  // base motor board 1?
+  rclcpp::Publisher<jaguar4x4_base_msgs::msg::MotorBoard>::SharedPtr motorBoardBase2Pub;  // base motor board 2?
 
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr cmdVelSub;
 

@@ -1,7 +1,7 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format2.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="2">
-  <name>jaguar4x4</name>
+  <name>jaguar4x4_base</name>
   <version>0.0.0</version>
   <description>jaguar 4x4 base node</description>
   <maintainer email="toffee.albina@tri.global">Toffee Albina</maintainer>
@@ -14,8 +14,8 @@
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
   <depend>boost</depend>
-  <depend>jaguar4x4_msgs</depend>
-  
+  <depend>jaguar4x4_base_msgs</depend>
+
   <export>
     <build_type>ament_cmake</build_type>
   </export>
