@@ -13,8 +13,8 @@
   <depend>std_msgs</depend>
   <depend>sensor_msgs</depend>
   <depend>geometry_msgs</depend>
-  <depend>boost</depend>
   <depend>jaguar4x4_base_msgs</depend>
+  <depend>jaguar4x4_comms</depend>
 
   <export>
     <build_type>ament_cmake</build_type>

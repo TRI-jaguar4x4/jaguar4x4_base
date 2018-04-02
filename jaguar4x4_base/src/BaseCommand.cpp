@@ -4,7 +4,8 @@
 #include <mutex>
 #include <string>
 
-#include "jaguar4x4_base/AbstractCommunication.h"
+#include <jaguar4x4_comms/AbstractCommunication.h>
+
 #include "jaguar4x4_base/BaseCommand.h"
 
 BaseCommand::BaseCommand(std::shared_ptr<AbstractCommunication> comm)

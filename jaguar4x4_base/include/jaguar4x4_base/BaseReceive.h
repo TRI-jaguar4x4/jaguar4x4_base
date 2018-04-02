@@ -5,8 +5,8 @@
 #include <memory>
 #include <utility>
 
-#include "AbstractCommunication.h"
-#include "MotorParse.h"
+#include <jaguar4x4_comms/AbstractCommunication.h>
+#include <jaguar4x4_comms/MotorParse.h>
 
 class AbstractBaseMsg {
  public:

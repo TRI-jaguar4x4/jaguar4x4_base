@@ -4,7 +4,7 @@
 #include <memory>
 #include <mutex>
 
-#include "AbstractCommunication.h"
+#include <jaguar4x4_comms/AbstractCommunication.h>
 
 class BaseCommand final {
  public:
