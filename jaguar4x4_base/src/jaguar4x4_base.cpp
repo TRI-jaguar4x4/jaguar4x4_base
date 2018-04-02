@@ -14,6 +14,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include <atomic>
 #include <chrono>
 #include <functional>
 #include <memory>
@@ -41,7 +42,8 @@ class Jaguar4x4Base final : public rclcpp::Node
 {
 public:
   explicit Jaguar4x4Base(const std::string& ip, uint16_t port)
-  : Node("jaguar4x4")
+    : Node("jaguar4x4"), prior_linear_x_(0.0), prior_angular_z_(0.0),
+      num_pings_sent_(0), num_pings_recvd_(0), accepting_commands_(false)
   {
     auto board_comm = std::make_shared<Communication>();
     board_comm->connect(ip, port);
@@ -64,6 +66,10 @@ public:
     motors_pub_ = this->create_publisher<jaguar4x4_base_msgs::msg::Motors>("base_motors");
     motors_msg_ = std::make_unique<jaguar4x4_base_msgs::msg::Motors>();
 
+    ping_timer_ = this->create_wall_timer(
+      std::chrono::milliseconds(Jaguar4x4Base::kPingTimerIntervalMS),
+      std::bind(&Jaguar4x4Base::pingTimerCallback, this));
+
     // DDS has different quality of service protocols two basic ones...
     // best_effort and reliable (for reliability).
     // best_effort can publish to best_effort and reliable can publish to reliable
@@ -78,6 +84,9 @@ public:
     cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel",
                                                                         std::bind(&Jaguar4x4Base::cmdVelCallback, this, std::placeholders::_1),
                                                                         cmd_vel_qos_profile);
+    // sending this to make sure that the motors are not moving (they
+    // seem to remember the last thing they were commanded to do)
+    base_cmd_->move(0, 0);
   }
 
   ~Jaguar4x4Base()
@@ -88,6 +97,14 @@ public:
 
 private:
   const uint32_t kMotorsPubTimerIntervalMS = 100;
+
+  // TODO: find out how long it takes the robot to respond.
+  // Bumping kPingRecvPercentage_ down to .6 from .8 seems to make things work
+  const uint32_t kPingTimerIntervalMS = 50;
+  const uint32_t kWatchdogIntervalMS = 500;
+  static constexpr double   kPingRecvPercentage = 0.6;
+  const uint32_t kPingsPerWatchdogInterval = kWatchdogIntervalMS/kPingTimerIntervalMS;
+  const uint32_t kMinPingsExpected = kPingsPerWatchdogInterval*kPingRecvPercentage;
 
   void publishIMUMsg(AbstractBaseMsg* base_msg, rcutils_time_point_value_t& now)
   {
@@ -156,6 +173,10 @@ private:
 
     std::unique_ptr<AbstractMotorMsg>& msg = motor->motor_msg_;
     abstractMotorToROS(msg.get(), motor_ref);
+
+    if (msg->getType() == AbstractMotorMsg::MessageType::motor_mode) {
+      num_pings_recvd_++;
+    }
   }
 
   void baseRecvThread(std::shared_future<void> local_future,
@@ -251,24 +272,57 @@ private:
   {
     RCLCPP_DEBUG(this->get_logger(), "Time to operate the robot!");
 
-    float linearX = msg->linear.x * 350;
-    float angularZ = msg->angular.z * 350;
+    if (!accepting_commands_) {
+      return;
+    }
 
-    if (linearX != 0.0) {
-      base_cmd_->resume();
+    double linearX = msg->linear.x * 350;
+    double angularZ = msg->angular.z * 350;
+
+    if (linearX != prior_linear_x_) {
+      std::cerr << "linearX=" << linearX << "  prior linearX=" << prior_linear_x_ << std::endl;
       base_cmd_->move(linearX, -linearX);
+      prior_linear_x_ = linearX;
     }
 
-    if (angularZ != 0.0) {
-      base_cmd_->resume();
+    if (angularZ != prior_angular_z_) {
+      std::cerr << "in angularZ linearX=" << linearX << "  prior linearX=" << prior_linear_x_ << std::endl;
       base_cmd_->move(angularZ, angularZ);
-    }
-
-    if (linearX == 0.0 && angularZ == 0.0) { // send stop
-      base_cmd_->eStop();
+      prior_angular_z_ = angularZ;
     }
   }
 
+  void pingTimerCallback()
+  {
+    // NOTE:  this implementation causes accepting_commands_ to be false
+    // for the first 500ms of operation
+    base_cmd_->ping();
+    num_pings_sent_++;
+
+    if (num_pings_sent_ < kPingsPerWatchdogInterval) {
+      return;
+    }
+
+    if (num_pings_recvd_ < kMinPingsExpected) {
+      accepting_commands_ = false;
+    } else {
+      if (!accepting_commands_) {
+        std::cerr << "accepting commands\n";
+        base_cmd_->move(0,0);
+        base_cmd_->resume();
+      }
+      accepting_commands_ = true;
+    }
+    num_pings_recvd_ = 0;
+    num_pings_sent_ = 0;
+  }
+
+  double                                                         prior_linear_x_;
+  double                                                         prior_angular_z_;
+  rclcpp::TimerBase::SharedPtr                                   ping_timer_;
+  uint32_t                                                       num_pings_sent_;
+  std::atomic<uint32_t>                                          num_pings_recvd_;
+  std::atomic<bool>                                              accepting_commands_;
   std::unique_ptr<BaseReceive>                                   base_recv_;
   std::thread                                                    base_recv_thread_;
   std::unique_ptr<BaseCommand>                                   base_cmd_;

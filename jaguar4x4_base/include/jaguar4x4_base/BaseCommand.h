@@ -12,6 +12,7 @@ class BaseCommand final {
   void move(int value_left, int value_right);
   void resume();
   void eStop();
+  void ping();
 
 private:
   std::shared_ptr<AbstractCommunication> comm_;

@@ -36,3 +36,10 @@ void BaseCommand::eStop()
   std::lock_guard<std::mutex> send_lock(send_mutex);
   comm_->sendCommand("MMW !EX\r\n");
 }
+
+void BaseCommand::ping()
+{
+  std::lock_guard<std::mutex> send_lock(send_mutex);
+  comm_->sendCommand("PING\r\n");
+  comm_->sendCommand("MMW ~MMOD\r\n");
+}
