@@ -20,7 +20,7 @@ find_package(jaguar4x4_comms REQUIRED)
 
 include_directories(include)
 
-add_executable(jaguar4x4_base_node src/jaguar4x4_base.cpp src/BaseReceive.cpp src/BaseCommand.cpp src/Utils.cpp)
+add_executable(jaguar4x4_base_node src/jaguar4x4_base.cpp src/BaseReceive.cpp src/BaseCommand.cpp)
 ament_target_dependencies(jaguar4x4_base_node rclcpp std_msgs sensor_msgs geometry_msgs jaguar4x4_base_msgs jaguar4x4_comms)
 
 install(TARGETS

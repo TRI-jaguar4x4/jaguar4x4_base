@@ -5,9 +5,9 @@
 #include <string>
 
 #include <jaguar4x4_comms/MotorParse.h>
+#include <jaguar4x4_comms/Utils.h>
 
 #include "jaguar4x4_base/BaseReceive.h"
-#include "jaguar4x4_base/Utils.h"
 
 BaseReceive::BaseReceive(std::shared_ptr<AbstractCommunication> comm) : comm_(comm)
 {
