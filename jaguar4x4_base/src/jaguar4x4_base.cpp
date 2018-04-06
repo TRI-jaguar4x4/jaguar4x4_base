@@ -42,7 +42,7 @@ class Jaguar4x4Base final : public rclcpp::Node
 {
 public:
   explicit Jaguar4x4Base(const std::string& ip, uint16_t port)
-    : Node("jaguar4x4"), prior_linear_x_(0.0), prior_angular_z_(0.0),
+    : Node("jaguar4x4"),
       num_pings_sent_(0), num_pings_recvd_(0), accepting_commands_(false)
   {
     auto board_comm = std::make_shared<Communication>();
@@ -239,6 +239,74 @@ private:
     motors_pub_->publish(motors_pub_msg);
   }
 
+  enum class Wheel
+  {
+    LEFT_WHEEL,
+    RIGHT_WHEEL,
+  };
+
+  double calcPWMFromTwistVels(double linear_x, double angular_z, Wheel wheel)
+  {
+    // In order to go from a Twist to the Differential Drive, we are using the
+    // equations from http://robotsforroboticists.com/drive-kinematics/ .  In
+    // particular:
+    //
+    // velocity_left_cmd = ((linear_velocity – angular_velocity) * WHEEL_BASE / 2.0)/WHEEL_RADIUS;
+    // velocity_right_cmd = ((linear_velocity + angular_velocity) * WHEEL_BASE / 2.0)/WHEEL_RADIUS;
+    //
+    // (note that the original fails to include the parentheses around the
+    // velocities, but that is necessary).
+    //
+    // From measurement, the Jaguar4x4 robot has a wheel radius of 0.13 meters
+    // and a Wheel Base of 0.335 meters.
+    //
+    // However, that is not enough for us to actually drive the robot.  We have
+    // to provide the Jaguar4x4 with Motor power (PWM values) to actually drive
+    // the wheels.  Thus, we have to take the velocities that we calculated
+    // above and transform them into PWM.
+    //
+    // Based on empirical evidence, we found the following approximate table
+    // of values:
+    //
+    // PWM value |   RPMs
+    // ----------+----------
+    //     95    |    7.81
+    //    100    |    9.09
+    //    250    |   31.14
+    //    500    |   64.94
+    //    750    |   99.00 (calculated)
+    //   1000    |  135.00 (calculated)
+    //
+    // Based on those values, we saw that it is basically a linear relationship.
+    // We calculated the slope based on (1000 - 95) / (135 - 7.81) = 522.66.
+    // Feeding that back into y = 522.66x + b, with a point of (135, 1000), we
+    // calculated b as 39.44 .  Thus, feeding a speed of x in m/s in, we can get
+    // the approximate PWM value out.
+
+    static const double JAGUAR_WHEEL_BASE_M = 0.335;
+    static const double JAGUAR_WHEEL_RADIUS_M = 0.13;
+
+    double combined_vels;
+    if (wheel == Wheel::LEFT_WHEEL) {
+      combined_vels = linear_x - angular_z;
+    } else {
+      combined_vels = linear_x + angular_z;
+    }
+
+    double velocity = (combined_vels * JAGUAR_WHEEL_BASE_M / 2.0) / JAGUAR_WHEEL_RADIUS_M;
+
+    double pwm = 522.65 * velocity;
+    if (velocity == 0) {
+      pwm = 0.0;
+    } else if (velocity < 0) {
+      pwm -= 39.44;
+    } else {
+      pwm += 39.44;
+    }
+
+    return pwm;
+  }
+
   void cmdVelCallback(const geometry_msgs::msg::Twist::SharedPtr msg)
   {
     RCLCPP_DEBUG(this->get_logger(), "Time to operate the robot!");
@@ -247,19 +315,18 @@ private:
       return;
     }
 
-    double linearX = msg->linear.x * 350;
-    double angularZ = msg->angular.z * 350;
+    double pwm_left = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::LEFT_WHEEL);
+    double pwm_right = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::RIGHT_WHEEL);
 
-    if (linearX != prior_linear_x_) {
-      std::cerr << "linearX=" << linearX << "  prior linearX=" << prior_linear_x_ << std::endl;
-      base_cmd_->move(linearX, -linearX);
-      prior_linear_x_ = linearX;
-    }
+    std::stringstream ss;
 
-    if (angularZ != prior_angular_z_) {
-      std::cerr << "in angularZ linearX=" << linearX << "  prior linearX=" << prior_linear_x_ << std::endl;
-      base_cmd_->move(angularZ, angularZ);
-      prior_angular_z_ = angularZ;
+    ss << "Linear: " << msg->linear.x << ", angular: " << msg->angular.z << ", pwm_left: " << pwm_left << ", pwm_right: " << pwm_right;
+    RCLCPP_DEBUG(this->get_logger(), ss.str().c_str());
+
+    if (prior_pwm_left_ != pwm_left || prior_pwm_right_ != pwm_right) {
+      base_cmd_->move(-pwm_right, pwm_left);
+      prior_pwm_left_ = pwm_left;
+      prior_pwm_right_ = pwm_right;
     }
   }
 
@@ -288,8 +355,8 @@ private:
     num_pings_sent_ = 0;
   }
 
-  double                                                         prior_linear_x_;
-  double                                                         prior_angular_z_;
+  double                                                         prior_pwm_left_{0.0};
+  double                                                         prior_pwm_right_{0.0};
   rclcpp::TimerBase::SharedPtr                                   ping_timer_;
   uint32_t                                                       num_pings_sent_;
   std::atomic<uint32_t>                                          num_pings_recvd_;
