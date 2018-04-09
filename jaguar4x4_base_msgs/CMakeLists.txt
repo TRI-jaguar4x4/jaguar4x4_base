@@ -18,6 +18,7 @@ find_package(rosidl_default_generators REQUIRED)
 
 rosidl_generate_interfaces(jaguar4x4_base_msgs
   msg/Motors.msg
+  srv/BaseRPMCalculator.srv
   DEPENDENCIES builtin_interfaces std_msgs jaguar4x4_comms_msgs
 )
 
