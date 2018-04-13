@@ -341,16 +341,16 @@ private:
 
   void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
   {
-    // Button 7 is the Right Trigger (RT) on the Logitech joystick, which we use
-    // as "eStop the robot".  Button 6 is the Left Trigger (LT) on the joystick,
-    // which we use as "resume the robot".  We start out with the robot in eStop,
-    // so you always must resume it to start using the robot.
+    // Button 11 is the Right Analog Stick press on the Logitech joystick, which
+    // we use as "eStop the robot".  Button 10 is the Left Analog Stick press on
+    // the joystick, which we use as "resume the robot".  We start out with the
+    // robot in eStop, so you always must resume it to start using the robot.
 
-    if (!msg->buttons[6] && !msg->buttons[7]) {
+    if (!msg->buttons[10] && !msg->buttons[11]) {
       return;
     }
 
-    if (msg->buttons[7]) {
+    if (msg->buttons[11]) {
       // If we see eStop, set our eStopped_ atomic variable to true.  This will
       // ensure that the pingThread does not start accepting commands while we
       // are eStopped.
@@ -368,6 +368,8 @@ private:
       // cmdVelCallback (the only other user of them).
       prior_pwm_left_ = 0.0;
       prior_pwm_right_ = 0.0;
+
+      std::cerr << "ESTOP" << std::endl;
     } else {
       // Resume the robot.  We set eStopped to false, and then rely on the
       // pingThread to set accepting_commands to true as appropriate.
