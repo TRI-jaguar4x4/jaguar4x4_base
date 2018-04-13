@@ -21,13 +21,14 @@
 #include <sstream>
 #include <string>
 
+#include "geometry_msgs/msg/twist.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rcutils/logging_macros.h"
-#include "std_msgs/msg/string.hpp"
 #include "sensor_msgs/msg/imu.hpp"
+#include "sensor_msgs/msg/joy.hpp"
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
-#include "geometry_msgs/msg/twist.hpp"
+#include "std_msgs/msg/string.hpp"
 
 #include <jaguar4x4_comms/Communication.h>
 #include "jaguar4x4_base/BaseCommand.h"
@@ -87,9 +88,17 @@ public:
     rpm_calc_srv_ = this->create_service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>("base_rpm_calculator",
                                                                                       std::bind(&Jaguar4x4Base::baseRPMCalculate, this, std::placeholders::_1, std::placeholders::_2));
 
+    // TODO: The joystick callback runs on the same thread as the RPM
+    // calculation service, so we can't currently eStop the RPM calculation.
+    // We should figure out how to do that.
+    joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>("joy",
+                                                                std::bind(&Jaguar4x4Base::joyCallback, this, std::placeholders::_1),
+                                                                cmd_vel_qos_profile);
+
     // sending this to make sure that the motors are not moving (they
     // seem to remember the last thing they were commanded to do)
     base_cmd_->move(0, 0);
+    base_cmd_->eStop();
   }
 
   ~Jaguar4x4Base()
@@ -330,6 +339,43 @@ private:
     }
   }
 
+  void joyCallback(const sensor_msgs::msg::Joy::SharedPtr msg)
+  {
+    // Button 7 is the Right Trigger (RT) on the Logitech joystick, which we use
+    // as "eStop the robot".  Button 6 is the Left Trigger (LT) on the joystick,
+    // which we use as "resume the robot".  We start out with the robot in eStop,
+    // so you always must resume it to start using the robot.
+
+    if (!msg->buttons[6] && !msg->buttons[7]) {
+      return;
+    }
+
+    if (msg->buttons[7]) {
+      // If we see eStop, set our eStopped_ atomic variable to true.  This will
+      // ensure that the pingThread does not start accepting commands while we
+      // are eStopped.
+      eStopped_ = true;
+      accepting_commands_ = false;
+
+      // eStop the robot, and set the movement to 0.  The latter is so that the
+      // robot won't continue moving at its last commanded power when we resume.
+      base_cmd_->eStop();
+      base_cmd_->move(0, 0);
+
+      // We have to reset the prior PWM values here so that when we resume, we
+      // actually start sending commands as expected.  Note that these are safe
+      // to change without atomics because they are on the same thread as the
+      // cmdVelCallback (the only other user of them).
+      prior_pwm_left_ = 0.0;
+      prior_pwm_right_ = 0.0;
+    } else {
+      // Resume the robot.  We set eStopped to false, and then rely on the
+      // pingThread to set accepting_commands to true as appropriate.
+      base_cmd_->resume();
+      eStopped_ = false;
+    }
+  }
+
   void pingThread(std::shared_future<void> local_future)
   {
     std::future_status status;
@@ -341,16 +387,17 @@ private:
 
       if (num_pings_sent >= kPingsPerWatchdogInterval) {
 
-        if (num_pings_recvd_ < kMinPingsExpected) {
-          std::cerr << "Stopped accepting commands" << std::endl;
-          accepting_commands_ = false;
-        } else {
-          if (!accepting_commands_) {
-            std::cerr << "accepting commands" << std::endl;
-            base_cmd_->move(0, 0);
-            base_cmd_->resume();
+        if (!eStopped_) {
+          if (num_pings_recvd_ < kMinPingsExpected) {
+            std::cerr << "Stopped accepting commands" << std::endl;
+            accepting_commands_ = false;
+          } else {
+            if (!accepting_commands_) {
+              std::cerr << "accepting commands" << std::endl;
+              base_cmd_->move(0, 0);
+            }
+            accepting_commands_ = true;
           }
-          accepting_commands_ = true;
         }
         num_pings_recvd_ = 0;
         num_pings_sent = 0;
@@ -509,6 +556,7 @@ private:
   double                                                                  prior_pwm_right_{0.0};
   std::thread                                                             ping_thread_;
   std::thread                                                             motors_pub_thread_;
+  std::thread                                                             joy_estop_thread_;
   std::atomic<uint32_t>                                                   num_pings_recvd_{0};
   std::atomic<bool>                                                       accepting_commands_{false};
   std::unique_ptr<BaseReceive>                                            base_recv_;
@@ -523,6 +571,8 @@ private:
   jaguar4x4_base_msgs::msg::Motors::UniquePtr                             motors_msg_;
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr              cmd_vel_sub_;
   rclcpp::Service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>::SharedPtr rpm_calc_srv_;
+  rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr                  joy_sub_;
+  std::atomic<bool>                                                       eStopped_{true};
   struct EncoderCountService final
   {
     int counts_;
