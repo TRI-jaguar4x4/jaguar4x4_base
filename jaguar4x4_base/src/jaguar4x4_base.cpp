@@ -178,9 +178,7 @@ private:
     std::unique_ptr<AbstractMotorMsg>& msg = motor->motor_msg_;
     abstractMotorToROS(msg.get(), motor_ref);
 
-    if (msg->getType() == AbstractMotorMsg::MessageType::motor_mode) {
-      num_pings_recvd_++;
-    }
+    num_data_recvd_++;
 
     // clalancette: When freewheeling, the base motors cannot start turning
     // until they get at least 35 to the PWM.
@@ -222,6 +220,9 @@ private:
       }
 
       status = local_future.wait_for(std::chrono::seconds(0));
+
+      base_msg.reset();
+
     } while (status == std::future_status::timeout);
   }
 
@@ -381,16 +382,17 @@ private:
   void pingThread(std::shared_future<void> local_future)
   {
     std::future_status status;
-    uint32_t num_pings_sent{0};
+
+    std::chrono::time_point<std::chrono::system_clock> last_watchdog_check = std::chrono::system_clock::now();
 
     do {
       base_cmd_->ping();
-      num_pings_sent++;
 
-      if (num_pings_sent >= kPingsPerWatchdogInterval) {
-
+      std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+      auto diff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_watchdog_check);
+      if (diff_ms.count() > kWatchdogIntervalMS) {
         if (!eStopped_) {
-          if (num_pings_recvd_ < kMinPingsExpected) {
+          if (num_data_recvd_ < kMinPingsExpected) {
             std::cerr << "Stopped accepting commands" << std::endl;
             accepting_commands_ = false;
           } else {
@@ -401,8 +403,8 @@ private:
             accepting_commands_ = true;
           }
         }
-        num_pings_recvd_ = 0;
-        num_pings_sent = 0;
+        last_watchdog_check = now;
+        num_data_recvd_ = 0;
       }
 
       std::this_thread::sleep_for(std::chrono::milliseconds(kPingTimerIntervalMS));
@@ -539,9 +541,9 @@ private:
 
   // Tunable parameters
   const uint32_t kMotorsPubTimerIntervalMS = 100;
-  const uint32_t kPingTimerIntervalMS = 50;
-  const uint32_t kWatchdogIntervalMS = 500;
-  static constexpr double kPingRecvPercentage = 0.6;
+  const uint32_t kPingTimerIntervalMS = 40;
+  const uint32_t kWatchdogIntervalMS = 200;
+  static constexpr double kPingRecvPercentage = 0.8;
   static constexpr double JAGUAR_WHEEL_RADIUS_M = 0.13;
   static constexpr double JAGUAR_WHEEL_BASE_M = 0.335;
   static constexpr double JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION = 520.0;
@@ -559,7 +561,7 @@ private:
   std::thread                                                             ping_thread_;
   std::thread                                                             motors_pub_thread_;
   std::thread                                                             joy_estop_thread_;
-  std::atomic<uint32_t>                                                   num_pings_recvd_{0};
+  std::atomic<uint32_t>                                                   num_data_recvd_{0};
   std::atomic<bool>                                                       accepting_commands_{false};
   std::unique_ptr<BaseReceive>                                            base_recv_;
   std::thread                                                             base_recv_thread_;
