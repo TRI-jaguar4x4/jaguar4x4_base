@@ -44,7 +44,7 @@ class Jaguar4x4Base final : public rclcpp::Node
 {
 public:
   explicit Jaguar4x4Base(const std::string& ip, uint16_t port)
-    : Node("jaguar4x4")
+    : Node("jaguar4x4base")
   {
     pwm_to_speed_slope_ = (pwm_to_speed_start_point_.pwm_ - pwm_to_speed_end_point_.pwm_) / (pwm_to_speed_start_point_.speed_m_per_s_ - pwm_to_speed_end_point_.speed_m_per_s_);
     pwm_to_speed_y_intercept_ = pwm_to_speed_start_point_.pwm_ - (pwm_to_speed_slope_ * pwm_to_speed_start_point_.speed_m_per_s_);
