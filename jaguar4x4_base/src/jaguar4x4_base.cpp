@@ -121,12 +121,16 @@ private:
     imu_msg->orientation.y = imu->comp_y_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.z = imu->comp_z_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.w = 0.0;
+    // The ITG3205 datasheet says 14.375 deg/sec/LSB for 16g, which is
+    // what we are configured for.
     imu_msg->angular_velocity.x = imu->gyro_x_ / 14.375; // all of the below are first approximation based on LSB
     imu_msg->angular_velocity.y = imu->gyro_y_ / 14.375;
     imu_msg->angular_velocity.z = imu->gyro_z_ / 14.375;
-    imu_msg->linear_acceleration.x = imu->accel_x_ / 32.0;
-    imu_msg->linear_acceleration.y = imu->accel_y_ / 32.0;
-    imu_msg->linear_acceleration.z = imu->accel_z_ / 32.0;
+    // The ADXL345 datasheet says between 28.6 and 34.5, but empirically we
+    // found we need to use 25.0 to get close to gravity.  Shrug.
+    imu_msg->linear_acceleration.x = imu->accel_x_ / 25.0;
+    imu_msg->linear_acceleration.y = imu->accel_y_ / 25.0;
+    imu_msg->linear_acceleration.z = imu->accel_z_ / 25.0;
     // don't know covariances, they're defaulting to 0
     imu_pub_->publish(imu_msg);
   }
@@ -569,8 +573,8 @@ private:
   const uint32_t kPingTimerIntervalMS = 40;
   const uint32_t kWatchdogIntervalMS = 200;
   static constexpr double kPingRecvPercentage = 0.8;
-  static constexpr double JAGUAR_WHEEL_RADIUS_M = 0.13;
-  static constexpr double JAGUAR_WHEEL_BASE_M = 0.335;
+  static constexpr double JAGUAR_WHEEL_RADIUS_M = 0.1325;
+  static constexpr double JAGUAR_WHEEL_BASE_M = 0.35;
   static constexpr double JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION = 520.0;
   const Point pwm_to_speed_start_point_{0.8840964279, 500};
   const Point pwm_to_speed_end_point_{0.1063000495, 95};
