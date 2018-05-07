@@ -123,12 +123,16 @@ private:
     gyro_bias_calc_.num_samples_ += 1;
   }
 
+  bool canCollect()
+  {
+    return !vehicle_dynamics_.is_moving_ && !have_gyro_bias_;
+  }
+
   void opportunisticGyroBiasCalculator(AbstractBaseMsg* base_msg)
   {
     ImuMsg* imu = dynamic_cast<ImuMsg*>(base_msg);
-    bool can_collect = !vehicle_dynamics_.is_moving_;
 
-    if (can_collect) {
+    if (canCollect()) {
       if (gyro_bias_calc_.in_progress_) {
         collectGyroData(imu);
 
@@ -149,21 +153,18 @@ private:
         gyro_bias_calc_.num_samples_ = 0;
       }
     } else {
-      if (gyro_bias_calc_.in_progress_) {
-        gyro_bias_calc_.in_progress_ = false;
-      } else {
-        // Do nothing.
-      }
+      gyro_bias_calc_.in_progress_ = false;
     }
   }
 
-  void publishIMUMsg(AbstractBaseMsg* base_msg, rcutils_time_point_value_t& now)
+  void publishIMUMsg(AbstractBaseMsg* base_msg)
   {
     ImuMsg* imu = dynamic_cast<ImuMsg*>(base_msg);
     auto imu_msg = std::make_unique<sensor_msgs::msg::Imu>();
 
-    imu_msg->header.stamp.sec = RCL_NS_TO_S(now);
-    imu_msg->header.stamp.nanosec = now - RCL_S_TO_NS(imu_msg->header.stamp.sec);
+    std::pair<std::chrono::seconds, std::chrono::nanoseconds> ts = base_msg->getTime();
+    imu_msg->header.stamp.sec = ts.first.count();
+    imu_msg->header.stamp.nanosec = ts.second.count();
     imu_msg->orientation.x = imu->comp_x_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.y = imu->comp_y_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.z = imu->comp_z_; // currently showing RAW magnetic sensor data
@@ -184,13 +185,14 @@ private:
     imu_pub_->publish(imu_msg);
   }
 
-  void publishGPSMsg(AbstractBaseMsg* base_msg, rcutils_time_point_value_t& now)
+  void publishGPSMsg(AbstractBaseMsg* base_msg)
   {
     GPSMsg* gps = dynamic_cast<GPSMsg*>(base_msg);
     auto navsat_fix_msg = std::make_unique<sensor_msgs::msg::NavSatFix>();
 
-    navsat_fix_msg->header.stamp.sec = RCL_NS_TO_S(now);
-    navsat_fix_msg->header.stamp.nanosec = now - RCL_S_TO_NS(navsat_fix_msg->header.stamp.sec);
+    std::pair<std::chrono::seconds, std::chrono::nanoseconds> ts = base_msg->getTime();
+    navsat_fix_msg->header.stamp.sec = ts.first.count();
+    navsat_fix_msg->header.stamp.nanosec = ts.second.count();
     switch (gps->status_) {
     case -1: // invalid
       navsat_fix_msg->status.status = sensor_msgs::msg::NavSatStatus::STATUS_NO_FIX;
@@ -296,17 +298,16 @@ private:
         std::cerr << "threw\n";
       }
 
-      rcutils_time_point_value_t now;
-      if (base_msg && rcutils_system_time_now(&now) == RCUTILS_RET_OK) {
+      if (base_msg) {
         switch(base_msg->getType()) {
         case AbstractBaseMsg::MessageType::imu:
           opportunisticGyroBiasCalculator(base_msg.get());
           if (have_gyro_bias_) {
-            publishIMUMsg(base_msg.get(), now);
+            publishIMUMsg(base_msg.get());
           }
           break;
         case AbstractBaseMsg::MessageType::gps:
-          publishGPSMsg(base_msg.get(), now);
+          publishGPSMsg(base_msg.get());
           break;
         case AbstractBaseMsg::MessageType::motor:
           updateMotorMsg(base_msg.get());

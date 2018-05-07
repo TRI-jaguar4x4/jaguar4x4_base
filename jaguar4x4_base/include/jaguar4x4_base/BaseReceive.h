@@ -17,12 +17,13 @@ class AbstractBaseMsg {
   };
 
   explicit AbstractBaseMsg(AbstractBaseMsg::MessageType msg_type)
-    : msg_type_(msg_type) {
+    : msg_type_(msg_type)
+  {
     std::chrono::time_point<std::chrono::system_clock,
-                            std::chrono::nanoseconds> t;
-    std::chrono::duration<int, std::nano> now = t.time_since_epoch();
-    ts_s_ = std::chrono::duration_cast<std::chrono::seconds>(now);
-    ts_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(now);
+      std::chrono::nanoseconds> now = std::chrono::system_clock::now();
+    std::chrono::duration<uint64_t, std::nano> epoch = now.time_since_epoch();
+    ts_s_ = std::chrono::duration_cast<std::chrono::seconds>(epoch);
+    ts_ns_ = std::chrono::duration_cast<std::chrono::nanoseconds>(epoch - ts_s_);
   }
 
   virtual ~AbstractBaseMsg() = default;
