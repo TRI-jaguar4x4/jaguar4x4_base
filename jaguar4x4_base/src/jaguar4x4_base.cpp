@@ -46,8 +46,8 @@ public:
   explicit Jaguar4x4Base(const std::string& ip, uint16_t port)
     : Node("jaguar4x4base")
   {
-    pwm_to_speed_slope_ = (pwm_to_speed_start_point_.pwm_ - pwm_to_speed_end_point_.pwm_) / (pwm_to_speed_start_point_.speed_m_per_s_ - pwm_to_speed_end_point_.speed_m_per_s_);
-    pwm_to_speed_y_intercept_ = pwm_to_speed_start_point_.pwm_ - (pwm_to_speed_slope_ * pwm_to_speed_start_point_.speed_m_per_s_);
+    pwm_to_speed_slope_ = (PWM_TO_SPEED_START_POINT_.pwm_ - PWM_TO_SPEED_END_POINT_.pwm_) / (PWM_TO_SPEED_START_POINT_.speed_m_per_s_ - PWM_TO_SPEED_END_POINT_.speed_m_per_s_);
+    pwm_to_speed_y_intercept_ = PWM_TO_SPEED_START_POINT_.pwm_ - (pwm_to_speed_slope_ * PWM_TO_SPEED_START_POINT_.speed_m_per_s_);
 
     auto board_comm = std::make_shared<Communication>();
     board_comm->connect(ip, port);
@@ -110,6 +110,53 @@ public:
   }
 
 private:
+  static inline double deg_per_sec_to_rad_per_sec(double deg_per_sec)
+  {
+    return deg_per_sec * 3.14159 / 180.0;
+  }
+
+  void collectGyroData(ImuMsg* imu)
+  {
+    gyro_bias_calc_.sum_x_ += imu->gyro_x_;
+    gyro_bias_calc_.sum_y_ += imu->gyro_y_;
+    gyro_bias_calc_.sum_z_ += imu->gyro_z_;
+    gyro_bias_calc_.num_samples_ += 1;
+  }
+
+  void opportunisticGyroBiasCalculator(AbstractBaseMsg* base_msg)
+  {
+    ImuMsg* imu = dynamic_cast<ImuMsg*>(base_msg);
+    bool can_collect = !vehicle_dynamics_.is_moving_;
+
+    if (can_collect) {
+      if (gyro_bias_calc_.in_progress_) {
+        collectGyroData(imu);
+
+        if (gyro_bias_calc_.num_samples_ > GYRO_NUM_BIAS_SAMPLES_NEEDED) {
+          gyro_bias_calc_.in_progress_ = false;
+
+          gyro_bias_x_ = gyro_bias_calc_.sum_x_ / gyro_bias_calc_.num_samples_;
+          gyro_bias_y_ = gyro_bias_calc_.sum_y_ / gyro_bias_calc_.num_samples_;
+          gyro_bias_z_ = gyro_bias_calc_.sum_z_ / gyro_bias_calc_.num_samples_;
+          have_gyro_bias_ = true;
+          std::cerr << "Completed bias: " << gyro_bias_x_ << std::endl;
+        }
+      } else {
+        gyro_bias_calc_.in_progress_ = true;
+        gyro_bias_calc_.sum_x_ = 0;
+        gyro_bias_calc_.sum_y_ = 0;
+        gyro_bias_calc_.sum_z_ = 0;
+        gyro_bias_calc_.num_samples_ = 0;
+      }
+    } else {
+      if (gyro_bias_calc_.in_progress_) {
+        gyro_bias_calc_.in_progress_ = false;
+      } else {
+        // Do nothing.
+      }
+    }
+  }
+
   void publishIMUMsg(AbstractBaseMsg* base_msg, rcutils_time_point_value_t& now)
   {
     ImuMsg* imu = dynamic_cast<ImuMsg*>(base_msg);
@@ -121,11 +168,13 @@ private:
     imu_msg->orientation.y = imu->comp_y_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.z = imu->comp_z_; // currently showing RAW magnetic sensor data
     imu_msg->orientation.w = 0.0;
+
     // The ITG3205 datasheet says 14.375 deg/sec/LSB for 16g, which is
     // what we are configured for.
-    imu_msg->angular_velocity.x = imu->gyro_x_ / 14.375; // all of the below are first approximation based on LSB
-    imu_msg->angular_velocity.y = imu->gyro_y_ / 14.375;
-    imu_msg->angular_velocity.z = imu->gyro_z_ / 14.375;
+    imu_msg->angular_velocity.x = deg_per_sec_to_rad_per_sec((imu->gyro_x_ - gyro_bias_x_) / 14.375);
+    imu_msg->angular_velocity.y = deg_per_sec_to_rad_per_sec((imu->gyro_y_ - gyro_bias_y_) / 14.375);
+    imu_msg->angular_velocity.z = deg_per_sec_to_rad_per_sec((imu->gyro_z_ - gyro_bias_z_) / 14.375);
+
     // The ADXL345 datasheet says between 28.6 and 34.5, but empirically we
     // found we need to use 25.0 to get close to gravity.  Shrug.
     imu_msg->linear_acceleration.x = imu->accel_x_ / 25.0;
@@ -209,6 +258,30 @@ private:
         }
       }
     }
+
+    // When all of the motors are at 0, we want to:
+    // 1.  Start a timer when this first happens,
+    // 2.  If the timer has gone for 5 seconds, now assume that all dynamics on
+    //     the robot due to driving have stopped.  We can now take a gyro bias
+    //     at any time.
+    if (motors_msg_->motor1.encoder_diff_1 == 0 && motors_msg_->motor1.encoder_diff_2 == 0 &&
+        motors_msg_->motor2.encoder_diff_1 == 0 && motors_msg_->motor2.encoder_diff_2 == 0) {
+      if (!vehicle_dynamics_.checking_zero_) {
+        vehicle_dynamics_.checking_zero_ = true;
+        vehicle_dynamics_.zero_start_time_ = std::chrono::system_clock::now();
+      } else {
+        std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
+
+        auto diff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - vehicle_dynamics_.zero_start_time_);
+        if (diff_ms.count() > VEHICLE_DYNAMICS_SETTLE_TIME_MS) {
+          vehicle_dynamics_.checking_zero_ = false;
+          vehicle_dynamics_.is_moving_ = false;
+        }
+      }
+    } else {
+      vehicle_dynamics_.checking_zero_ = false;
+      vehicle_dynamics_.is_moving_ = true;
+    }
   }
 
   void baseRecvThread(std::shared_future<void> local_future)
@@ -227,7 +300,10 @@ private:
       if (base_msg && rcutils_system_time_now(&now) == RCUTILS_RET_OK) {
         switch(base_msg->getType()) {
         case AbstractBaseMsg::MessageType::imu:
-          publishIMUMsg(base_msg.get(), now);
+          opportunisticGyroBiasCalculator(base_msg.get());
+          if (have_gyro_bias_) {
+            publishIMUMsg(base_msg.get(), now);
+          }
           break;
         case AbstractBaseMsg::MessageType::gps:
           publishGPSMsg(base_msg.get(), now);
@@ -374,7 +450,7 @@ private:
       // If we see eStop, set our eStopped_ atomic variable to true.  This will
       // ensure that the pingThread does not start accepting commands while we
       // are eStopped.
-      eStopped_ = true;
+      e_stopped_ = true;
       accepting_commands_ = false;
 
       // eStop the robot, and set the movement to 0.  The latter is so that the
@@ -394,7 +470,7 @@ private:
       // Resume the robot.  We set eStopped to false, and then rely on the
       // pingThread to set accepting_commands to true as appropriate.
       base_cmd_->resume();
-      eStopped_ = false;
+      e_stopped_ = false;
     }
   }
 
@@ -409,9 +485,9 @@ private:
 
       std::chrono::time_point<std::chrono::system_clock> now = std::chrono::system_clock::now();
       auto diff_ms = std::chrono::duration_cast<std::chrono::milliseconds>(now - last_watchdog_check);
-      if (diff_ms.count() > kWatchdogIntervalMS) {
-        if (!eStopped_) {
-          if (num_data_recvd_ < kMinPingsExpected) {
+      if (diff_ms.count() > WATCHDOG_INTERVAL_MS) {
+        if (!e_stopped_ && have_gyro_bias_) {
+          if (num_data_recvd_ < MIN_PINGS_EXPECTED) {
             std::cerr << "Stopped accepting commands" << std::endl;
             accepting_commands_ = false;
           } else {
@@ -426,7 +502,7 @@ private:
         num_data_recvd_ = 0;
       }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(kPingTimerIntervalMS));
+      std::this_thread::sleep_for(std::chrono::milliseconds(PING_TIMER_INTERVAL_MS));
 
       status = local_future.wait_for(std::chrono::seconds(0));
     } while (status == std::future_status::timeout);
@@ -471,7 +547,7 @@ private:
         }
       }
 
-      std::this_thread::sleep_for(std::chrono::milliseconds(kMotorsPubTimerIntervalMS));
+      std::this_thread::sleep_for(std::chrono::milliseconds(MOTORS_PUB_TIMER_INTERVAL_MS));
 
       status = local_future.wait_for(std::chrono::seconds(0));
     } while (status == std::future_status::timeout);
@@ -569,19 +645,21 @@ private:
   };
 
   // Tunable parameters
-  const uint32_t kMotorsPubTimerIntervalMS = 100;
-  const uint32_t kPingTimerIntervalMS = 40;
-  const uint32_t kWatchdogIntervalMS = 200;
-  static constexpr double kPingRecvPercentage = 0.8;
+  const uint32_t MOTORS_PUB_TIMER_INTERVAL_MS = 100;
+  const uint32_t PING_TIMER_INTERVAL_MS = 40;
+  const uint32_t WATCHDOG_INTERVAL_MS = 200;
+  static constexpr double PING_RECV_PERCENTAGE = 0.8;
   static constexpr double JAGUAR_WHEEL_RADIUS_M = 0.1325;
   static constexpr double JAGUAR_WHEEL_BASE_M = 0.35;
   static constexpr double JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION = 520.0;
-  const Point pwm_to_speed_start_point_{0.8840964279, 500};
-  const Point pwm_to_speed_end_point_{0.1063000495, 95};
+  static constexpr int GYRO_NUM_BIAS_SAMPLES_NEEDED = 100;
+  static constexpr uint32_t VEHICLE_DYNAMICS_SETTLE_TIME_MS = 5000;
+  const Point PWM_TO_SPEED_START_POINT_{0.8840964279, 500};
+  const Point PWM_TO_SPEED_END_POINT_{0.1063000495, 95};
 
   // Constants calculated based on the tunable parameters above
-  const uint32_t kPingsPerWatchdogInterval = kWatchdogIntervalMS / kPingTimerIntervalMS;
-  const uint32_t kMinPingsExpected = kPingsPerWatchdogInterval * kPingRecvPercentage;
+  const uint32_t PINGS_PER_WATCHDOG_INTERVAL = WATCHDOG_INTERVAL_MS / PING_TIMER_INTERVAL_MS;
+  const uint32_t MIN_PINGS_EXPECTED = PINGS_PER_WATCHDOG_INTERVAL * PING_RECV_PERCENTAGE;
 
   double                                                                  pwm_to_speed_slope_;
   double                                                                  pwm_to_speed_y_intercept_;
@@ -606,7 +684,7 @@ private:
   rclcpp::Subscription<geometry_msgs::msg::Twist>::SharedPtr              cmd_vel_sub_;
   rclcpp::Service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>::SharedPtr rpm_calc_srv_;
   rclcpp::Subscription<sensor_msgs::msg::Joy>::SharedPtr                  joy_sub_;
-  std::atomic<bool>                                                       eStopped_{true};
+  std::atomic<bool>                                                       e_stopped_{true};
   struct EncoderCountService final
   {
     int counts_;
@@ -615,6 +693,30 @@ private:
     int motor_num_;
   };
   EncoderCountService                                                     enc_count_service_;
+
+  struct VehicleDynamics final
+  {
+    bool is_moving_{true};
+    bool checking_zero_{false};
+    std::chrono::time_point<std::chrono::system_clock> zero_start_time_;
+  };
+  VehicleDynamics                                                           vehicle_dynamics_;
+
+  struct GyroBiasCalc final
+  {
+    int sum_x_{0};
+    int sum_y_{0};
+    int sum_z_{0};
+    int num_samples_{0};
+    bool in_progress_{false};
+  };
+  GyroBiasCalc                                                            gyro_bias_calc_;
+
+  // These are the outputs from the GyroBiasCalc above.
+  int                                                                     gyro_bias_x_{0};
+  int                                                                     gyro_bias_y_{0};
+  int                                                                     gyro_bias_z_{0};
+  bool                                                                    have_gyro_bias_{false};
 };
 
 int main(int argc, char * argv[])
