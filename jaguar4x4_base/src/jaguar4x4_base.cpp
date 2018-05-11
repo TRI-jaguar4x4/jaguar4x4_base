@@ -22,6 +22,7 @@
 #include <string>
 
 #include "geometry_msgs/msg/twist.hpp"
+#include "nav_msgs/msg/odometry.hpp"
 #include "rclcpp/rclcpp.hpp"
 #include "rcutils/logging_macros.h"
 #include "sensor_msgs/msg/imu.hpp"
@@ -29,6 +30,8 @@
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "tf2/LinearMath/Quaternion.h"
+#include "tf2_ros/transform_broadcaster.h"
 
 #include <jaguar4x4_comms/Communication.h>
 #include "jaguar4x4_base/BaseCommand.h"
@@ -37,6 +40,9 @@
 #include "jaguar4x4_base_msgs/msg/motors.hpp" // pattern is all lower case name w/ underscores
 #include "jaguar4x4_base_msgs/srv/base_rpm_calculator.hpp"
 #include <jaguar4x4_comms_msgs/msg/motor_board.hpp> // pattern is all lower case name w/ underscores
+
+#include <ecl/mobile_robot.hpp>
+#include <ecl/linear_algebra.hpp>
 
 using namespace std::chrono_literals;
 
@@ -60,12 +66,21 @@ public:
     base_recv_thread_ = std::thread(&Jaguar4x4Base::baseRecvThread, this,
                                     future_);
 
-    imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu");
+    imu_pub_ = this->create_publisher<sensor_msgs::msg::Imu>("imu",
+                                                             rmw_qos_profile_sensor_data);
 
-    navsat_pub_ = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat");
+    navsat_pub_ = this->create_publisher<sensor_msgs::msg::NavSatFix>("navsat",
+                                                                      rmw_qos_profile_sensor_data);
+
+    rmw_qos_profile_t tf_qos_profile = rmw_qos_profile_default;
+    tf_qos_profile.depth = 100;
+    tf_pub_ = this->create_publisher<tf2_msgs::msg::TFMessage>("tf", tf_qos_profile);
 
     motors_msg_ = std::make_unique<jaguar4x4_base_msgs::msg::Motors>();
-    motors_pub_ = this->create_publisher<jaguar4x4_base_msgs::msg::Motors>("base_motors");
+    motors_pub_ = this->create_publisher<jaguar4x4_base_msgs::msg::Motors>("base_motors",
+                                                                           rmw_qos_profile_sensor_data);
+    odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("odom",
+                                                                rmw_qos_profile_sensor_data);
     motors_pub_thread_ = std::thread(&Jaguar4x4Base::motorsPubThread, this, future_);
 
     ping_thread_ = std::thread(&Jaguar4x4Base::pingThread, this, future_);
@@ -157,10 +172,40 @@ private:
     }
   }
 
+  void updateTheta(std::shared_ptr<sensor_msgs::msg::Imu> imu_msg)
+  {
+    uint64_t curr_imu_time_ns = (static_cast<uint64_t>(imu_msg->header.stamp.sec) * 1000 * 1000 * 1000) + imu_msg->header.stamp.nanosec;
+    if (last_imu_time_ns_ == 0) {
+      last_imu_time_ns_ = curr_imu_time_ns;
+      return;
+    }
+
+    if (curr_imu_time_ns < last_imu_time_ns_) {
+      std::cerr << "Out of order: curr " << curr_imu_time_ns << ", last: " << last_imu_time_ns_ << std::endl;
+      assert(false);
+    }
+
+    double time_diff_ns = curr_imu_time_ns - last_imu_time_ns_;
+
+    double rads = fabs(imu_msg->angular_velocity.z) * RCL_NS_TO_S(time_diff_ns);
+    if (imu_msg->angular_velocity.z > 0) {
+      theta_ += rads;
+    } else {
+      theta_ += (2.0 * 3.14159) - rads;
+    }
+
+    // TODO: We are currently limiting the angle to 0-2Pi.  Should we make this
+    // -Pi to Pi instead?
+    theta_ = fmod(theta_, 2.0 * 3.14159);
+    //std::cerr << "Added: " << imu_msg->angular_velocity.z << ", time diff ns: " << time_diff_ns << ", Theta: " << theta_ << std::endl;
+
+    last_imu_time_ns_ = curr_imu_time_ns;
+  }
+
   void publishIMUMsg(AbstractBaseMsg* base_msg)
   {
     ImuMsg* imu = dynamic_cast<ImuMsg*>(base_msg);
-    auto imu_msg = std::make_unique<sensor_msgs::msg::Imu>();
+    auto imu_msg = std::make_shared<sensor_msgs::msg::Imu>();
 
     std::pair<std::chrono::seconds, std::chrono::nanoseconds> ts = base_msg->getTime();
     imu_msg->header.stamp.sec = ts.first.count();
@@ -181,6 +226,9 @@ private:
     imu_msg->linear_acceleration.x = imu->accel_x_ / 25.0;
     imu_msg->linear_acceleration.y = imu->accel_y_ / 25.0;
     imu_msg->linear_acceleration.z = imu->accel_z_ / 25.0;
+
+    updateTheta(imu_msg);
+
     // don't know covariances, they're defaulting to 0
     imu_pub_->publish(imu_msg);
   }
@@ -215,6 +263,37 @@ private:
     navsat_pub_->publish(navsat_fix_msg);
   }
 
+  void updatePoseXY(MotorEncPosDiffMsg *motor_enc_pos_diff)
+  {
+    // Ported from: https://github.com/yujinrobot/kobuki_core/blob/devel/kobuki_driver/src/driver/diff_drive.cpp#L52
+
+    double left_diff_ticks = motor_enc_pos_diff->pos_diff_2_;
+
+    // The Jaguar4x4 has the wheel encoders inverted
+    double right_diff_ticks = -motor_enc_pos_diff->pos_diff_1_;
+
+    ecl::LegacyPose2D<double> pose_update = diff_drive_k_.forward(RADS_PER_TICK * left_diff_ticks,
+                                                                  RADS_PER_TICK * right_diff_ticks);
+
+    std::pair<std::chrono::seconds, std::chrono::nanoseconds> ts = motor_enc_pos_diff->getTime();
+    uint64_t curr_timestamp_ns = RCUTILS_S_TO_NS(ts.first.count()) + ts.second.count();
+    double last_diff_time_sec{0.0};
+    if (curr_timestamp_ns != last_timestamp_ns_) {
+      last_diff_time_sec = (curr_timestamp_ns - last_timestamp_ns_) / 1000000000.0;
+      last_timestamp_ns_ = curr_timestamp_ns;
+    } else {
+      std::cerr << "BUGGGGG" << std::endl;
+      assert(false);
+    }
+
+    pose_update_rates_ << pose_update.x() / last_diff_time_sec,
+      pose_update.y() / last_diff_time_sec,
+      pose_update.heading() / last_diff_time_sec;
+
+    // Ported from: https://github.com/ros2/turtlebot2_demo/blob/master/turtlebot2_drivers/src/kobuki_node.cpp#L156
+    pose_ *= pose_update;
+  }
+
   void updateMotorMsg(AbstractBaseMsg* base_msg)
   {
     std::lock_guard<std::mutex> sf_lock_guard(motors_sensor_frame_mutex_);
@@ -223,14 +302,14 @@ private:
     int64_t old_encoder_diff1;
     int64_t old_encoder_diff2;
 
-    if (motor->motor_num_ == 0) {
+    if (motor->motor_num_ == FRONT_MOTOR_NUM) {
+      motor_ref = &motors_msg_->motor0;
+      old_encoder_diff1 = motors_msg_->motor0.encoder_diff_1;
+      old_encoder_diff2 = motors_msg_->motor0.encoder_diff_2;
+    } else if (motor->motor_num_ == REAR_MOTOR_NUM) {
       motor_ref = &motors_msg_->motor1;
       old_encoder_diff1 = motors_msg_->motor1.encoder_diff_1;
       old_encoder_diff2 = motors_msg_->motor1.encoder_diff_2;
-    } else if (motor->motor_num_ == 1) {
-      motor_ref = &motors_msg_->motor2;
-      old_encoder_diff1 = motors_msg_->motor2.encoder_diff_1;
-      old_encoder_diff2 = motors_msg_->motor2.encoder_diff_2;
     } else {
       RCLCPP_WARN(get_logger(), "Invalid Motor %d", motor->motor_num_);
       return;
@@ -247,6 +326,10 @@ private:
     // until they get at least 35 to the PWM.
     if (msg->getType() == AbstractMotorMsg::MessageType::encoder_position_diff) {
       MotorEncPosDiffMsg *motor_enc_pos_diff = dynamic_cast<MotorEncPosDiffMsg*>(msg.get());
+
+      if (motor->motor_num_ == FRONT_MOTOR_NUM) {
+        updatePoseXY(motor_enc_pos_diff);
+      }
 
       // We accumulate encoder diffs here so that we have all of the encoder
       // changes since the last sensor frame.  All other values are instantaneous.
@@ -266,8 +349,8 @@ private:
     // 2.  If the timer has gone for 5 seconds, now assume that all dynamics on
     //     the robot due to driving have stopped.  We can now take a gyro bias
     //     at any time.
-    if (motors_msg_->motor1.encoder_diff_1 == 0 && motors_msg_->motor1.encoder_diff_2 == 0 &&
-        motors_msg_->motor2.encoder_diff_1 == 0 && motors_msg_->motor2.encoder_diff_2 == 0) {
+    if (motors_msg_->motor0.encoder_diff_1 == 0 && motors_msg_->motor0.encoder_diff_2 == 0 &&
+        motors_msg_->motor1.encoder_diff_1 == 0 && motors_msg_->motor1.encoder_diff_2 == 0) {
       if (!vehicle_dynamics_.checking_zero_) {
         vehicle_dynamics_.checking_zero_ = true;
         vehicle_dynamics_.zero_start_time_ = std::chrono::system_clock::now();
@@ -509,15 +592,78 @@ private:
     } while (status == std::future_status::timeout);
   }
 
+  void publishOdomMsg(rcutils_time_point_value_t now)
+  {
+    auto odom_msg = std::make_shared<nav_msgs::msg::Odometry>();
+    odom_msg->header.frame_id = "odom";
+    odom_msg->child_frame_id = "base_link";
+
+    // Stuff and publish /odom
+    odom_msg->header.stamp.sec = RCL_NS_TO_S(now);
+    odom_msg->header.stamp.nanosec = now - RCL_S_TO_NS(odom_msg->header.stamp.sec);
+    odom_msg->pose.pose.position.x = pose_.x();
+    odom_msg->pose.pose.position.y = pose_.y();
+    odom_msg->pose.pose.position.z = 0.0;
+
+    tf2::Quaternion q;
+    q.setRPY(0.0, 0.0, pose_.heading());
+    odom_msg->pose.pose.orientation.x = q.x();
+    odom_msg->pose.pose.orientation.y = q.y();
+    odom_msg->pose.pose.orientation.z = q.z();
+    odom_msg->pose.pose.orientation.w = q.w();
+
+    for (unsigned int i = 0; i < odom_msg->pose.covariance.size(); ++i) {
+      odom_msg->pose.covariance[i] = 0.0;
+    }
+    // Pose covariance (required by robot_pose_ekf) TODO: publish realistic values
+    // Odometry yaw covariance must be much bigger than the covariance provided
+    // by the imu, as the later takes much better measures
+    odom_msg->pose.covariance[0] = 0.1;
+    odom_msg->pose.covariance[7] = 0.1;
+    // odom_msg->pose.covariance[35] = use_imu_heading ? 0.05 : 0.2;
+    odom_msg->pose.covariance[35] = 0.2;
+
+    odom_msg->pose.covariance[14] = DBL_MAX;  // set a non-zero covariance on unused
+    odom_msg->pose.covariance[21] = DBL_MAX;  // dimensions (z, pitch and roll); this
+    odom_msg->pose.covariance[28] = DBL_MAX;  // is a requirement of robot_pose_ekf
+
+    odom_msg->twist.twist.linear.x = pose_update_rates_[0];
+    odom_msg->twist.twist.linear.y = pose_update_rates_[1];
+    odom_msg->twist.twist.linear.z = 0.0;
+    odom_msg->twist.twist.angular.x = 0.0;
+    odom_msg->twist.twist.angular.y = 0.0;
+    odom_msg->twist.twist.angular.z = pose_update_rates_[2];
+
+    odom_pub_->publish(odom_msg);
+
+    auto odom_tf_msg = std::make_shared<geometry_msgs::msg::TransformStamped>();
+    odom_tf_msg->header.frame_id = "odom";
+    odom_tf_msg->child_frame_id = "base_link";
+
+    // Stuff and publish /tf
+    odom_tf_msg->header.stamp = odom_msg->header.stamp;
+    odom_tf_msg->transform.translation.x = pose_.x();
+    odom_tf_msg->transform.translation.y = pose_.y();
+    odom_tf_msg->transform.translation.z = 0.0;
+    odom_tf_msg->transform.rotation.x = q.x();
+    odom_tf_msg->transform.rotation.y = q.y();
+    odom_tf_msg->transform.rotation.z = q.z();
+    odom_tf_msg->transform.rotation.w = q.w();
+
+    tf2_msgs::msg::TFMessage tf_msg;
+    tf_msg.transforms.push_back(*odom_tf_msg);
+    tf_pub_->publish(tf_msg);
+  }
+
   void motorsPubThread(std::shared_future<void> local_future)
   {
     std::future_status status;
 
     do {
-      if (new_motor_data_) {
-        // to set timestamp
-        rcutils_time_point_value_t now;
-        if (rcutils_system_time_now(&now) == RCUTILS_RET_OK) {
+      // to set timestamp
+      rcutils_time_point_value_t now;
+      if (rcutils_system_time_now(&now) == RCUTILS_RET_OK) {
+        if (new_motor_data_) {
           auto motors_pub_msg = std::make_unique<jaguar4x4_base_msgs::msg::Motors>();
 
           motors_pub_msg->header.stamp.sec = RCL_NS_TO_S(now);
@@ -530,22 +676,24 @@ private:
             // jaguar4x4_comms_msgs::msg::MotorBoard, which is a class generated by the
             // ROS2 generator.  Those classes do not have copy constructors or =operator
             // implemented, so we copy by hand here.
+            copyMotorBoardMessage(&(motors_pub_msg->motor0), &(motors_msg_->motor0));
             copyMotorBoardMessage(&(motors_pub_msg->motor1), &(motors_msg_->motor1));
-            copyMotorBoardMessage(&(motors_pub_msg->motor2), &(motors_msg_->motor2));
+
+            motors_msg_->motor0.encoder_diff_1 = 0;
+            motors_msg_->motor0.encoder_diff_2 = 0;
 
             motors_msg_->motor1.encoder_diff_1 = 0;
             motors_msg_->motor1.encoder_diff_2 = 0;
-
-            motors_msg_->motor2.encoder_diff_1 = 0;
-            motors_msg_->motor2.encoder_diff_2 = 0;
 
             new_motor_data_ = false;
           }
 
           motors_pub_->publish(motors_pub_msg);
-        } else {
-          std::cerr << "unable to access time\n";
         }
+
+        publishOdomMsg(now);
+      } else {
+        std::cerr << "unable to access time\n";
       }
 
       std::this_thread::sleep_for(std::chrono::milliseconds(MOTORS_PUB_TIMER_INTERVAL_MS));
@@ -646,21 +794,26 @@ private:
   };
 
   // Tunable parameters
+  const uint32_t FRONT_MOTOR_NUM = 0;
+  const uint32_t REAR_MOTOR_NUM = 1;
   const uint32_t MOTORS_PUB_TIMER_INTERVAL_MS = 100;
   const uint32_t PING_TIMER_INTERVAL_MS = 40;
   const uint32_t WATCHDOG_INTERVAL_MS = 200;
   static constexpr double PING_RECV_PERCENTAGE = 0.8;
-  static constexpr double JAGUAR_WHEEL_RADIUS_M = 0.1325;
+  const double JAGUAR_WHEEL_RADIUS_M = 0.1325;
   static constexpr double JAGUAR_WHEEL_BASE_M = 0.35;
   static constexpr double JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION = 520.0;
   static constexpr int GYRO_NUM_BIAS_SAMPLES_NEEDED = 100;
-  static constexpr uint32_t VEHICLE_DYNAMICS_SETTLE_TIME_MS = 5000;
+  static constexpr uint32_t VEHICLE_DYNAMICS_SETTLE_TIME_MS = 3000;
+  const double JAGUAR_ENCODER_TICKS = 520.0;
+  const double JAGUAR_AXLE_LENGTH_M = 0.425;
   const Point PWM_TO_SPEED_START_POINT_{0.8840964279, 500};
   const Point PWM_TO_SPEED_END_POINT_{0.1063000495, 95};
 
   // Constants calculated based on the tunable parameters above
   const uint32_t PINGS_PER_WATCHDOG_INTERVAL = WATCHDOG_INTERVAL_MS / PING_TIMER_INTERVAL_MS;
   const uint32_t MIN_PINGS_EXPECTED = PINGS_PER_WATCHDOG_INTERVAL * PING_RECV_PERCENTAGE;
+  const double RADS_PER_TICK = (2.0 * 3.14159) / JAGUAR_ENCODER_TICKS;
 
   double                                                                  pwm_to_speed_slope_;
   double                                                                  pwm_to_speed_y_intercept_;
@@ -718,6 +871,14 @@ private:
   int                                                                     gyro_bias_y_{0};
   int                                                                     gyro_bias_z_{0};
   bool                                                                    have_gyro_bias_{false};
+  ecl::DifferentialDrive::Kinematics                                      diff_drive_k_{JAGUAR_AXLE_LENGTH_M, JAGUAR_WHEEL_RADIUS_M};
+  uint64_t                                                                last_timestamp_ns_{0};
+  ecl::linear_algebra::Vector3d                                           pose_update_rates_;
+  ecl::LegacyPose2D<double>                                               pose_;
+  rclcpp::Publisher<nav_msgs::msg::Odometry>::SharedPtr                   odom_pub_;
+  rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr                  tf_pub_;
+  double                                                                  theta_{0.0};
+  uint64_t                                                                last_imu_time_ns_{0};
 };
 
 int main(int argc, char * argv[])
