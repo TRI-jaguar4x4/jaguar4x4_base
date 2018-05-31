@@ -30,6 +30,7 @@
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
 
@@ -109,6 +110,9 @@ public:
     joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>("joy",
                                                                 std::bind(&Jaguar4x4Base::joyCallback, this, std::placeholders::_1),
                                                                 cmd_vel_qos_profile);
+
+    travel_one_meter_srv_ = this->create_service<std_srvs::srv::Trigger>("travel_one_meter",
+                                                                         std::bind(&Jaguar4x4Base::travel_one_meter,  this, std::placeholders::_1, std::placeholders::_2));
 
     // sending this to make sure that the motors are not moving (they
     // seem to remember the last thing they were commanded to do)
@@ -304,6 +308,8 @@ private:
 
     if (motor->motor_num_ == FRONT_MOTOR_NUM) {
       motor_ref = &motors_msg_->motor0;
+      // Save off the current encoder diff, since it will be replaced during
+      // abstractMotorToROS() below, and we want to accumulate it.
       old_encoder_diff1 = motors_msg_->motor0.encoder_diff_1;
       old_encoder_diff2 = motors_msg_->motor0.encoder_diff_2;
     } else if (motor->motor_num_ == REAR_MOTOR_NUM) {
@@ -341,6 +347,11 @@ private:
         } else {
           enc_count_service_.counts_ += motor_enc_pos_diff->pos_diff_2_;
         }
+      }
+
+      if (travel_one_meter_running_ && motor->motor_num_ == FRONT_MOTOR_NUM) {
+        int ticks_to_add = (motor_enc_pos_diff->pos_diff_1_ + -motor_enc_pos_diff->pos_diff_2_) / 2;
+        travel_one_meter_total_ticks_ += ticks_to_add;
       }
     }
 
@@ -411,7 +422,7 @@ private:
     RIGHT_WHEEL,
   };
 
-  double calcPWMFromTwistVels(double linear_x, double angular_z, Wheel wheel)
+  int calcPWMFromTwistVels(double linear_x, double angular_z, Wheel wheel)
   {
     // In order to go from a Twist to the Differential Drive, we are using the
     // equations from http://robotsforroboticists.com/drive-kinematics/ .  In
@@ -504,8 +515,8 @@ private:
       return;
     }
 
-    double pwm_left = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::LEFT_WHEEL);
-    double pwm_right = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::RIGHT_WHEEL);
+    int pwm_left = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::LEFT_WHEEL);
+    int pwm_right = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::RIGHT_WHEEL);
 
     std::stringstream ss;
 
@@ -787,6 +798,46 @@ private:
     response->speed_m_per_s = response->rpms * circum_m / 60.0;
   }
 
+  void travel_one_meter(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                        std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void)request;
+
+    if (e_stopped_) {
+      response->success = false;
+      response->message = "EStopped";
+      return;
+    }
+
+    if (!accepting_commands_) {
+      response->success = false;
+      response->message = "Not accepting commands";
+      return;
+    }
+
+    int pwm_left = calcPWMFromTwistVels(0.2, 0.0, Wheel::LEFT_WHEEL);
+    int pwm_right = calcPWMFromTwistVels(0.2, 0.0, Wheel::LEFT_WHEEL);
+
+    travel_one_meter_running_ = true;
+    travel_one_meter_total_ticks_ = 0;
+
+    base_cmd_->move(pwm_left, -pwm_right);
+
+    double total_moved = 0.0;
+    while (total_moved < 1.0) {
+      double percent_wheel_traveled = travel_one_meter_total_ticks_ / JAGUAR_ENCODER_TICKS;
+      total_moved = JAGUAR_WHEEL_CIRCUM_M * percent_wheel_traveled;
+      std::this_thread::sleep_for(std::chrono::milliseconds(1));
+    }
+
+    base_cmd_->move(0, 0);
+
+    travel_one_meter_running_ = false;
+
+    response->success = true;
+    response->message = "go go go";
+  }
+
   struct Point final
   {
     double speed_m_per_s_;
@@ -814,6 +865,7 @@ private:
   const uint32_t PINGS_PER_WATCHDOG_INTERVAL = WATCHDOG_INTERVAL_MS / PING_TIMER_INTERVAL_MS;
   const uint32_t MIN_PINGS_EXPECTED = PINGS_PER_WATCHDOG_INTERVAL * PING_RECV_PERCENTAGE;
   const double RADS_PER_TICK = (2.0 * 3.14159) / JAGUAR_ENCODER_TICKS;
+  const double JAGUAR_WHEEL_CIRCUM_M = 2.0 * 3.14159 * JAGUAR_WHEEL_RADIUS_M;
 
   double                                                                  pwm_to_speed_slope_;
   double                                                                  pwm_to_speed_y_intercept_;
@@ -879,6 +931,9 @@ private:
   rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr                  tf_pub_;
   double                                                                  theta_{0.0};
   uint64_t                                                                last_imu_time_ns_{0};
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr                      travel_one_meter_srv_;
+  std::atomic<bool>                                                       travel_one_meter_running_{false};
+  std::atomic<int>                                                        travel_one_meter_total_ticks_{0};
 };
 
 int main(int argc, char * argv[])
