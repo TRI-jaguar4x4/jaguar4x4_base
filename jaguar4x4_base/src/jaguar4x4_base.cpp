@@ -129,9 +129,9 @@ public:
   }
 
 private:
-  static inline double deg_per_sec_to_rad_per_sec(double deg_per_sec)
+  inline double deg_per_sec_to_rad_per_sec(double deg_per_sec)
   {
-    return deg_per_sec * 3.14159 / 180.0;
+    return deg_per_sec * JAGUAR_PI / 180.0;
   }
 
   void collectGyroData(ImuMsg* imu)
@@ -195,12 +195,12 @@ private:
     if (imu_msg->angular_velocity.z > 0) {
       theta_ += rads;
     } else {
-      theta_ += (2.0 * 3.14159) - rads;
+      theta_ += JAGUAR_TWO_PI - rads;
     }
 
     // TODO: We are currently limiting the angle to 0-2Pi.  Should we make this
     // -Pi to Pi instead?
-    theta_ = fmod(theta_, 2.0 * 3.14159);
+    theta_ = fmod(theta_, JAGUAR_TWO_PI);
     //std::cerr << "Added: " << imu_msg->angular_velocity.z << ", time diff ns: " << time_diff_ns << ", Theta: " << theta_ << std::endl;
 
     last_imu_time_ns_ = curr_imu_time_ns;
@@ -786,7 +786,7 @@ private:
     // circumference (we know the Jaguar4x4 wheel radius is 0.13 meters):
     //
     // circum_m = 2 * pi * r = 2 * pi * 0.13 = 0.817
-    double circum_m = 2 * 3.14159 * JAGUAR_WHEEL_RADIUS_M;
+    double circum_m = JAGUAR_TWO_PI * JAGUAR_WHEEL_RADIUS_M;
 
     // Given that, we can now determine the speed in m/s by the following
     // formula:
@@ -860,12 +860,14 @@ private:
   const double JAGUAR_AXLE_LENGTH_M = 0.425;
   const Point PWM_TO_SPEED_START_POINT_{0.8840964279, 500};
   const Point PWM_TO_SPEED_END_POINT_{0.1063000495, 95};
+  const double JAGUAR_PI = 3.14159265;
 
   // Constants calculated based on the tunable parameters above
+  const double JAGUAR_TWO_PI = 2.0 * JAGUAR_PI;
   const uint32_t PINGS_PER_WATCHDOG_INTERVAL = WATCHDOG_INTERVAL_MS / PING_TIMER_INTERVAL_MS;
   const uint32_t MIN_PINGS_EXPECTED = PINGS_PER_WATCHDOG_INTERVAL * PING_RECV_PERCENTAGE;
-  const double RADS_PER_TICK = (2.0 * 3.14159) / JAGUAR_ENCODER_TICKS;
-  const double JAGUAR_WHEEL_CIRCUM_M = 2.0 * 3.14159 * JAGUAR_WHEEL_RADIUS_M;
+  const double RADS_PER_TICK = JAGUAR_TWO_PI / JAGUAR_ENCODER_TICKS;
+  const double JAGUAR_WHEEL_CIRCUM_M = JAGUAR_TWO_PI * JAGUAR_WHEEL_RADIUS_M;
 
   double                                                                  pwm_to_speed_slope_;
   double                                                                  pwm_to_speed_y_intercept_;
