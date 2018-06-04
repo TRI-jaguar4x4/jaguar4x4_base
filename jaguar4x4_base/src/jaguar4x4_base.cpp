@@ -162,7 +162,7 @@ private:
           gyro_bias_y_ = gyro_bias_calc_.sum_y_ / gyro_bias_calc_.num_samples_;
           gyro_bias_z_ = gyro_bias_calc_.sum_z_ / gyro_bias_calc_.num_samples_;
           have_gyro_bias_ = true;
-          std::cerr << "Completed bias: " << gyro_bias_x_ << std::endl;
+          std::cerr << "Completed IMU bias: " << gyro_bias_z_ << std::endl;
         }
       } else {
         gyro_bias_calc_.in_progress_ = true;
@@ -181,6 +181,7 @@ private:
     uint64_t curr_imu_time_ns = (static_cast<uint64_t>(imu_msg->header.stamp.sec) * 1000 * 1000 * 1000) + imu_msg->header.stamp.nanosec;
     if (last_imu_time_ns_ == 0) {
       last_imu_time_ns_ = curr_imu_time_ns;
+      last_imu_ang_vel_z_ = imu_msg->angular_velocity.z;
       return;
     }
 
@@ -191,19 +192,28 @@ private:
 
     double time_diff_ns = curr_imu_time_ns - last_imu_time_ns_;
 
-    double rads = fabs(imu_msg->angular_velocity.z) * RCL_NS_TO_S(time_diff_ns);
+    // TODO(clalancette): Instead of a simple average we should probably bias
+    // this with an acceleration.  That is, if the last reading was 0.5 and this
+    // one is 0.1, we are clearly decelerating so the intervening data should
+    // take that into account.
+
+    double ang_vel_z_avg = (last_imu_ang_vel_z_ + imu_msg->angular_velocity.z) / 2;
+
+    double rads = ang_vel_z_avg * RCL_NS_TO_S(time_diff_ns);
+
+    theta_ += rads;
     if (imu_msg->angular_velocity.z > 0) {
-      theta_ += rads;
+      if (theta_ > JAGUAR_PI) {
+        theta_ = -JAGUAR_PI + (theta_ - JAGUAR_PI);
+      }
     } else {
-      theta_ += JAGUAR_TWO_PI - rads;
+      if (theta_ < -JAGUAR_PI) {
+        theta_ = JAGUAR_PI + (JAGUAR_PI + theta_);
+      }
     }
 
-    // TODO: We are currently limiting the angle to 0-2Pi.  Should we make this
-    // -Pi to Pi instead?
-    theta_ = fmod(theta_, JAGUAR_TWO_PI);
-    //std::cerr << "Added: " << imu_msg->angular_velocity.z << ", time diff ns: " << time_diff_ns << ", Theta: " << theta_ << std::endl;
-
     last_imu_time_ns_ = curr_imu_time_ns;
+    last_imu_ang_vel_z_ = imu_msg->angular_velocity.z;
   }
 
   void publishIMUMsg(AbstractBaseMsg* base_msg)
@@ -936,6 +946,7 @@ private:
   rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr                      travel_one_meter_srv_;
   std::atomic<bool>                                                       travel_one_meter_running_{false};
   std::atomic<int>                                                        travel_one_meter_total_ticks_{0};
+  double                                                                  last_imu_ang_vel_z_{0.0};
 };
 
 int main(int argc, char * argv[])
