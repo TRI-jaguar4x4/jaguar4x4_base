@@ -281,10 +281,10 @@ private:
   {
     // Ported from: https://github.com/yujinrobot/kobuki_core/blob/devel/kobuki_driver/src/driver/diff_drive.cpp#L52
 
-    double left_diff_ticks = motor_enc_pos_diff->pos_diff_2_;
-
     // The Jaguar4x4 has the wheel encoders inverted
-    double right_diff_ticks = -motor_enc_pos_diff->pos_diff_1_;
+    double right_diff_ticks = -motor_enc_pos_diff->pos_diff_2_;
+
+    double left_diff_ticks = motor_enc_pos_diff->pos_diff_1_;
 
     ecl::LegacyPose2D<double> pose_update = diff_drive_k_.forward(RADS_PER_TICK * left_diff_ticks,
                                                                   RADS_PER_TICK * right_diff_ticks);
@@ -534,7 +534,7 @@ private:
     RCLCPP_DEBUG(this->get_logger(), ss.str().c_str());
 
     if (prior_pwm_left_ != pwm_left || prior_pwm_right_ != pwm_right) {
-      base_cmd_->move(-pwm_right, pwm_left);
+      base_cmd_->move(pwm_left, -pwm_right);
       prior_pwm_left_ = pwm_left;
       prior_pwm_right_ = pwm_right;
     }
