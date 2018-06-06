@@ -30,7 +30,6 @@
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "std_msgs/msg/string.hpp"
-#include "std_srvs/srv/trigger.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
 
@@ -40,6 +39,7 @@
 
 #include "jaguar4x4_base_msgs/msg/motors.hpp" // pattern is all lower case name w/ underscores
 #include "jaguar4x4_base_msgs/srv/base_rpm_calculator.hpp"
+#include "jaguar4x4_base_msgs/srv/travel_set_distance.hpp"
 #include <jaguar4x4_comms_msgs/msg/motor_board.hpp> // pattern is all lower case name w/ underscores
 
 #include <ecl/mobile_robot.hpp>
@@ -75,13 +75,16 @@ public:
 
     rmw_qos_profile_t tf_qos_profile = rmw_qos_profile_default;
     tf_qos_profile.depth = 100;
-    tf_pub_ = this->create_publisher<tf2_msgs::msg::TFMessage>("tf", tf_qos_profile);
+    tf_pub_ = this->create_publisher<tf2_msgs::msg::TFMessage>("tf",
+                                                               tf_qos_profile);
 
     motors_msg_ = std::make_unique<jaguar4x4_base_msgs::msg::Motors>();
-    motors_pub_ = this->create_publisher<jaguar4x4_base_msgs::msg::Motors>("base_motors",
-                                                                           rmw_qos_profile_sensor_data);
-    odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>("odom",
-                                                                rmw_qos_profile_sensor_data);
+    motors_pub_ = this->create_publisher<jaguar4x4_base_msgs::msg::Motors>(
+        "base_motors",
+        rmw_qos_profile_sensor_data);
+    odom_pub_ = this->create_publisher<nav_msgs::msg::Odometry>(
+        "odom",
+        rmw_qos_profile_sensor_data);
     motors_pub_thread_ = std::thread(&Jaguar4x4Base::motorsPubThread, this, future_);
 
     ping_thread_ = std::thread(&Jaguar4x4Base::pingThread, this, future_);
@@ -97,24 +100,31 @@ public:
     cmd_vel_qos_profile.reliability = RMW_QOS_POLICY_RELIABILITY_BEST_EFFORT;
     cmd_vel_qos_profile.durability = RMW_QOS_POLICY_DURABILITY_VOLATILE;
 
-    cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>("cmd_vel",
-                                                                        std::bind(&Jaguar4x4Base::cmdVelCallback, this, std::placeholders::_1),
-                                                                        cmd_vel_qos_profile);
+    cmd_vel_sub_ = this->create_subscription<geometry_msgs::msg::Twist>(
+        "cmd_vel",
+        std::bind(&Jaguar4x4Base::cmdVelCallback, this, std::placeholders::_1),
+        cmd_vel_qos_profile);
 
-    rpm_calc_srv_ = this->create_service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>("base_rpm_calculator",
-                                                                                      std::bind(&Jaguar4x4Base::baseRPMCalculate, this, std::placeholders::_1, std::placeholders::_2));
+    rpm_calc_srv_ = this->create_service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>(
+        "base_rpm_calculator",
+        std::bind(&Jaguar4x4Base::baseRPMCalculate, this,
+                  std::placeholders::_1, std::placeholders::_2));
 
     // We use a separate callback group for the joystick callback so that a
     // thread can service this separate from all of the other callbacks,
     // including services.
-    joy_cb_grp_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
-    joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>("joy",
-                                                                std::bind(&Jaguar4x4Base::joyCallback, this, std::placeholders::_1),
-                                                                cmd_vel_qos_profile,
-                                                                joy_cb_grp_);
+    joy_cb_grp_ = this->create_callback_group(
+        rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
+    joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>(
+        "joy",
+        std::bind(&Jaguar4x4Base::joyCallback, this, std::placeholders::_1),
+        cmd_vel_qos_profile,
+        joy_cb_grp_);
 
-    travel_one_meter_srv_ = this->create_service<std_srvs::srv::Trigger>("travel_one_meter",
-                                                                         std::bind(&Jaguar4x4Base::travel_one_meter,  this, std::placeholders::_1, std::placeholders::_2));
+    travel_set_distance_srv_ = this->create_service<jaguar4x4_base_msgs::srv::TravelSetDistance>(
+        "travel_set_distance",
+        std::bind(&Jaguar4x4Base::travel_set_distance, this,
+                  std::placeholders::_1, std::placeholders::_2));
 
     // sending this to make sure that the motors are not moving (they
     // seem to remember the last thing they were commanded to do)
@@ -361,9 +371,9 @@ private:
         }
       }
 
-      if (travel_one_meter_running_ && motor->motor_num_ == FRONT_MOTOR_NUM) {
+      if (travel_set_distance_running_ && motor->motor_num_ == FRONT_MOTOR_NUM) {
         int ticks_to_add = (motor_enc_pos_diff->pos_diff_1_ + -motor_enc_pos_diff->pos_diff_2_) / 2;
-        travel_one_meter_total_ticks_ += ticks_to_add;
+        travel_set_distance_total_ticks_ += ticks_to_add;
       }
     }
 
@@ -827,22 +837,20 @@ private:
     }
   }
 
-  void travel_one_meter(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
-                        std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  void travel_set_distance(const std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Request> request,
+                        std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Response> response)
   {
-    (void)request;
-
     if (!accepting_commands_) {
       response->success = false;
       response->message = "Not accepting commands (eStopped?)";
       return;
     }
 
-    int pwm_left = calcPWMFromTwistVels(0.2, 0.0, Wheel::LEFT_WHEEL);
-    int pwm_right = calcPWMFromTwistVels(0.2, 0.0, Wheel::LEFT_WHEEL);
+    int pwm_left = calcPWMFromTwistVels(request->speed_m_per_s, 0.0, Wheel::LEFT_WHEEL);
+    int pwm_right = calcPWMFromTwistVels(request->speed_m_per_s, 0.0, Wheel::RIGHT_WHEEL);
 
-    travel_one_meter_running_ = true;
-    travel_one_meter_total_ticks_ = 0;
+    travel_set_distance_running_ = true;
+    travel_set_distance_total_ticks_ = 0;
 
     base_cmd_->move(pwm_left, -pwm_right);
 
@@ -850,8 +858,8 @@ private:
     response->message = "go go go";
 
     double total_moved = 0.0;
-    while (total_moved < 1.0) {
-      double percent_wheel_traveled = travel_one_meter_total_ticks_ / JAGUAR_ENCODER_TICKS;
+    while (total_moved < request->distance_m) {
+      double percent_wheel_traveled = travel_set_distance_total_ticks_ / JAGUAR_ENCODER_TICKS;
       total_moved = JAGUAR_WHEEL_CIRCUM_M * percent_wheel_traveled;
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
       // After waking up, we always check to make sure the robot is still
@@ -867,7 +875,7 @@ private:
 
     base_cmd_->move(0, 0);
 
-    travel_one_meter_running_ = false;
+    travel_set_distance_running_ = false;
   }
 
   struct Point final
@@ -965,9 +973,9 @@ private:
   rclcpp::Publisher<tf2_msgs::msg::TFMessage>::SharedPtr                  tf_pub_;
   double                                                                  theta_{0.0};
   uint64_t                                                                last_imu_time_ns_{0};
-  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr                      travel_one_meter_srv_;
-  std::atomic<bool>                                                       travel_one_meter_running_{false};
-  std::atomic<int>                                                        travel_one_meter_total_ticks_{0};
+  rclcpp::Service<jaguar4x4_base_msgs::srv::TravelSetDistance>::SharedPtr travel_set_distance_srv_;
+  std::atomic<bool>                                                       travel_set_distance_running_{false};
+  std::atomic<int>                                                        travel_set_distance_total_ticks_{0};
   double                                                                  last_imu_ang_vel_z_{0.0};
   rclcpp::callback_group::CallbackGroup::SharedPtr                        joy_cb_grp_;
 };

@@ -1,0 +1,7 @@
+# Copyright 2018 Toyota Research Institute.  All rights reserved.
+
+float64 distance_m     # Distance to travel in meters
+float64 speed_m_per_s  # Speed in meters/sec
+---
+bool    success        # Whether the service succeeded
+string  message        # Success/failure reason
