@@ -104,12 +104,14 @@ public:
     rpm_calc_srv_ = this->create_service<jaguar4x4_base_msgs::srv::BaseRPMCalculator>("base_rpm_calculator",
                                                                                       std::bind(&Jaguar4x4Base::baseRPMCalculate, this, std::placeholders::_1, std::placeholders::_2));
 
-    // TODO: The joystick callback runs on the same thread as the RPM
-    // calculation service, so we can't currently eStop the RPM calculation.
-    // We should figure out how to do that.
+    // We use a separate callback group for the joystick callback so that a
+    // thread can service this separate from all of the other callbacks,
+    // including services.
+    joy_cb_grp_ = this->create_callback_group(rclcpp::callback_group::CallbackGroupType::MutuallyExclusive);
     joy_sub_ = this->create_subscription<sensor_msgs::msg::Joy>("joy",
                                                                 std::bind(&Jaguar4x4Base::joyCallback, this, std::placeholders::_1),
-                                                                cmd_vel_qos_profile);
+                                                                cmd_vel_qos_profile,
+                                                                joy_cb_grp_);
 
     travel_one_meter_srv_ = this->create_service<std_srvs::srv::Trigger>("travel_one_meter",
                                                                          std::bind(&Jaguar4x4Base::travel_one_meter,  this, std::placeholders::_1, std::placeholders::_2));
@@ -738,7 +740,14 @@ private:
   void baseRPMCalculate(const std::shared_ptr<jaguar4x4_base_msgs::srv::BaseRPMCalculator::Request> request,
                         std::shared_ptr<jaguar4x4_base_msgs::srv::BaseRPMCalculator::Response> response)
   {
-    std::cerr << "Called calculate!" << std::endl;
+    response->rpms = 0.0;
+    response->speed_m_per_s = 0.0;
+
+    if (!accepting_commands_) {
+      response->success = false;
+      response->message = "Not accepting commands (eStopped?)";
+      return;
+    }
 
     // Figure out which motor board and motor number we want to watch.
     if (request->test_motor == request->TEST_MOTOR_FRONT_LEFT) {
@@ -754,9 +763,8 @@ private:
       enc_count_service_.motor_board_num_ = 1;
       enc_count_service_.motor_num_ = 1;
     } else {
-      // error?  Return -1 for rpms
-      response->rpms = -1.0;
-      response->speed_m_per_s = -1.0;
+      response->success = false;
+      response->message = "Invalid motor requested";
       return;
     }
 
@@ -768,10 +776,22 @@ private:
     base_cmd_->move(request->test_motor_power, -request->test_motor_power);
     enc_count_service_.running_ = true;
 
+    response->success = true;
+    response->message = "Success";
+
     std::chrono::duration<double, std::milli> diff_ms;
     diff_ms = std::chrono::high_resolution_clock::now() - start_time;
     while (diff_ms.count() < request->test_duration_ms) {
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      // After waking up, we always check to make sure the robot is still
+      // accepting commands (this could have changed either via a network
+      // disconnect or from an eStop command coming in from the joystick).
+      // If it isn't accepting commands anymore, fail the service.
+      if (!accepting_commands_) {
+        response->success = false;
+        response->message = "Stopped accepting commands (eStopped?)";
+        break;
+      }
       diff_ms = std::chrono::high_resolution_clock::now() - start_time;
     }
 
@@ -779,33 +799,32 @@ private:
     // Stop the base movement
     base_cmd_->move(0, 0);
 
-    // Determining the RPMs from the number of encoder counts is a
-    // straightforward affair.  We take the total number of counts observed,
-    // then divide by the encoder counts per rotation (520.0) to determine
-    // the number of full rotations observed.  We then divide that by the
-    // number of milliseconds that elapsed to get revolutions per millisecond.
-    // We then multiply that by 1000*60 to get the number of revolutions per
-    // minute, for a final formula of:
-    //
-    // rpms = ((counts / 520.0) / time_elapsed_ms) * (1000.0 * 60)
-    response->rpms = ((enc_count_service_.counts_ / JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION) / diff_ms.count()) * (1000.0 * 60.0);
+    if (response->success) {
+      // Determining the RPMs from the number of encoder counts is a
+      // straightforward affair.  We take the total number of counts observed,
+      // then divide by the encoder counts per rotation (520.0) to determine
+      // the number of full rotations observed.  We then divide that by the
+      // number of milliseconds that elapsed to get revolutions per millisecond.
+      // We then multiply that by 1000*60 to get the number of revolutions per
+      // minute, for a final formula of:
+      //
+      // rpms = ((counts / 520.0) / time_elapsed_ms) * (1000.0 * 60)
+      response->rpms = ((enc_count_service_.counts_ / JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION) / diff_ms.count()) * (1000.0 * 60.0);
 
-    // Determining the speed from the RPMs is also straightforward, though we
-    // need an additional piece of information.  Specifically, we need to know
-    // how far the wheel goes per rotation, which we can get from the
-    // circumference (we know the Jaguar4x4 wheel radius is 0.13 meters):
-    //
-    // circum_m = 2 * pi * r = 2 * pi * 0.13 = 0.817
-    double circum_m = JAGUAR_TWO_PI * JAGUAR_WHEEL_RADIUS_M;
-
-    // Given that, we can now determine the speed in m/s by the following
-    // formula:
-    //
-    // speed_m_per_s = rpms * circum_m / 60
-    //
-    // (rpms * circum_m determines the speed in meters/minute, then we divide
-    // by 60 to get the speed in meters/second).
-    response->speed_m_per_s = response->rpms * circum_m / 60.0;
+      // Determining the speed from the RPMs is also straightforward, though we
+      // need an additional piece of information.  Specifically, we need to know
+      // how far the wheel goes per rotation, which we can get from the
+      // circumference (we know the Jaguar4x4 wheel radius is 0.13 meters).
+      //
+      // Given that, we can now determine the speed in m/s by the following
+      // formula:
+      //
+      // speed_m_per_s = rpms * circum_m / 60
+      //
+      // (rpms * circum_m determines the speed in meters/minute, then we divide
+      // by 60 to get the speed in meters/second).
+      response->speed_m_per_s = response->rpms * JAGUAR_WHEEL_CIRCUM_M / 60.0;
+    }
   }
 
   void travel_one_meter(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
@@ -813,15 +832,9 @@ private:
   {
     (void)request;
 
-    if (e_stopped_) {
-      response->success = false;
-      response->message = "EStopped";
-      return;
-    }
-
     if (!accepting_commands_) {
       response->success = false;
-      response->message = "Not accepting commands";
+      response->message = "Not accepting commands (eStopped?)";
       return;
     }
 
@@ -833,19 +846,28 @@ private:
 
     base_cmd_->move(pwm_left, -pwm_right);
 
+    response->success = true;
+    response->message = "go go go";
+
     double total_moved = 0.0;
     while (total_moved < 1.0) {
       double percent_wheel_traveled = travel_one_meter_total_ticks_ / JAGUAR_ENCODER_TICKS;
       total_moved = JAGUAR_WHEEL_CIRCUM_M * percent_wheel_traveled;
       std::this_thread::sleep_for(std::chrono::milliseconds(1));
+      // After waking up, we always check to make sure the robot is still
+      // accepting commands (this could have changed either via a network
+      // disconnect or from an eStop command coming in from the joystick).
+      // If it isn't accepting commands anymore, fail the service.
+      if (!accepting_commands_) {
+        response->success = false;
+        response->message = "Stopped accepting commands (eStopped?)";
+        break;
+      }
     }
 
     base_cmd_->move(0, 0);
 
     travel_one_meter_running_ = false;
-
-    response->success = true;
-    response->message = "go go go";
   }
 
   struct Point final
@@ -947,12 +969,16 @@ private:
   std::atomic<bool>                                                       travel_one_meter_running_{false};
   std::atomic<int>                                                        travel_one_meter_total_ticks_{0};
   double                                                                  last_imu_ang_vel_z_{0.0};
+  rclcpp::callback_group::CallbackGroup::SharedPtr                        joy_cb_grp_;
 };
 
 int main(int argc, char * argv[])
 {
   rclcpp::init(argc, argv);
-  rclcpp::spin(std::make_unique<Jaguar4x4Base>("192.168.0.60", 10001));
+  rclcpp::executors::MultiThreadedExecutor executor;
+  auto base = std::make_shared<Jaguar4x4Base>("192.168.0.60", 10001);
+  executor.add_node(base);
+  executor.spin();
   rclcpp::shutdown();
   return 0;
 }

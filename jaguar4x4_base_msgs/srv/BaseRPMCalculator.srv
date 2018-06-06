@@ -9,5 +9,7 @@ uint8  test_motor        # One of the above enum
 int16  test_motor_power  # The motor PWM power to use; between -1000 and 1000
 uint32 test_duration_ms  # How long to run the test for in milliseconds
 ---
+bool    success          # Whether the service succeeded
+string  message          # Success/failure reason
 float64 rpms             # Average RPMs over the test run
 float64 speed_m_per_s    # Speed in meters/second
