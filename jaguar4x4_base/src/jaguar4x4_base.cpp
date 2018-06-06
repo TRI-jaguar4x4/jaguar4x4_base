@@ -357,6 +357,10 @@ private:
 
       if (motor->motor_num_ == FRONT_MOTOR_NUM) {
         updatePoseXY(motor_enc_pos_diff);
+        rcutils_time_point_value_t now;
+        if (rcutils_system_time_now(&now) == RCUTILS_RET_OK) {
+          publishOdomMsg(now);
+        }
       }
 
       // We accumulate encoder diffs here so that we have all of the encoder
@@ -723,8 +727,6 @@ private:
 
           motors_pub_->publish(motors_pub_msg);
         }
-
-        publishOdomMsg(now);
       } else {
         std::cerr << "unable to access time\n";
       }
