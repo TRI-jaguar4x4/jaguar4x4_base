@@ -30,6 +30,7 @@
 #include "sensor_msgs/msg/nav_sat_status.hpp"
 #include "sensor_msgs/msg/nav_sat_fix.hpp"
 #include "std_msgs/msg/string.hpp"
+#include "std_srvs/srv/trigger.hpp"
 #include "tf2/LinearMath/Quaternion.h"
 #include "tf2_ros/transform_broadcaster.h"
 
@@ -123,7 +124,12 @@ public:
 
     travel_set_distance_srv_ = this->create_service<jaguar4x4_base_msgs::srv::TravelSetDistance>(
         "travel_set_distance",
-        std::bind(&Jaguar4x4Base::travel_set_distance, this,
+        std::bind(&Jaguar4x4Base::travelSetDistance, this,
+                  std::placeholders::_1, std::placeholders::_2));
+
+    reset_pose_srv_ = this->create_service<std_srvs::srv::Trigger>(
+        "reset_pose",
+        std::bind(&Jaguar4x4Base::resetPose, this,
                   std::placeholders::_1, std::placeholders::_2));
 
     // sending this to make sure that the motors are not moving (they
@@ -317,7 +323,10 @@ private:
       pose_update.heading() / last_diff_time_sec;
 
     // Ported from: https://github.com/ros2/turtlebot2_demo/blob/master/turtlebot2_drivers/src/kobuki_node.cpp#L156
-    pose_ *= pose_update;
+    {
+      std::lock_guard<std::mutex> p_lock_guard(pose_mutex_);
+      pose_ *= pose_update;
+    }
   }
 
   void updateMotorMsg(AbstractBaseMsg* base_msg)
@@ -631,6 +640,16 @@ private:
 
   void publishOdomMsg(rcutils_time_point_value_t now)
   {
+    double pose_x;
+    double pose_y;
+    double pose_heading;
+    {
+      std::lock_guard<std::mutex> p_lock_guard(pose_mutex_);
+      pose_x = pose_.x();
+      pose_y = pose_.y();
+      pose_heading = pose_.heading();
+    }
+
     auto odom_msg = std::make_shared<nav_msgs::msg::Odometry>();
     odom_msg->header.frame_id = "odom";
     odom_msg->child_frame_id = "base_link";
@@ -638,12 +657,12 @@ private:
     // Stuff and publish /odom
     odom_msg->header.stamp.sec = RCL_NS_TO_S(now);
     odom_msg->header.stamp.nanosec = now - RCL_S_TO_NS(odom_msg->header.stamp.sec);
-    odom_msg->pose.pose.position.x = pose_.x();
-    odom_msg->pose.pose.position.y = pose_.y();
+    odom_msg->pose.pose.position.x = pose_x;
+    odom_msg->pose.pose.position.y = pose_y;
     odom_msg->pose.pose.position.z = 0.0;
 
     tf2::Quaternion q;
-    q.setRPY(0.0, 0.0, pose_.heading());
+    q.setRPY(0.0, 0.0, pose_heading);
     odom_msg->pose.pose.orientation.x = q.x();
     odom_msg->pose.pose.orientation.y = q.y();
     odom_msg->pose.pose.orientation.z = q.z();
@@ -679,8 +698,8 @@ private:
 
     // Stuff and publish /tf
     odom_tf_msg->header.stamp = odom_msg->header.stamp;
-    odom_tf_msg->transform.translation.x = pose_.x();
-    odom_tf_msg->transform.translation.y = pose_.y();
+    odom_tf_msg->transform.translation.x = pose_x;
+    odom_tf_msg->transform.translation.y = pose_y;
     odom_tf_msg->transform.translation.z = 0.0;
     odom_tf_msg->transform.rotation.x = q.x();
     odom_tf_msg->transform.rotation.y = q.y();
@@ -839,8 +858,8 @@ private:
     }
   }
 
-  void travel_set_distance(const std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Request> request,
-                        std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Response> response)
+  void travelSetDistance(const std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Request> request,
+                         std::shared_ptr<jaguar4x4_base_msgs::srv::TravelSetDistance::Response> response)
   {
     if (!accepting_commands_) {
       response->success = false;
@@ -880,6 +899,22 @@ private:
     travel_set_distance_running_ = false;
   }
 
+  void resetPose(const std::shared_ptr<std_srvs::srv::Trigger::Request> request,
+                         std::shared_ptr<std_srvs::srv::Trigger::Response> response)
+  {
+    (void) request; // just making gcc happy
+
+    // zero the pose
+    {
+      std::lock_guard<std::mutex> p_lock_guard(pose_mutex_);
+      pose_.setIdentity();
+    }
+
+    response->success = true;
+    response->message = "pose zeroed";
+
+  }
+
   struct Point final
   {
     double speed_m_per_s_;
@@ -893,6 +928,9 @@ private:
   const uint32_t PING_TIMER_INTERVAL_MS = 40;
   const uint32_t WATCHDOG_INTERVAL_MS = 200;
   static constexpr double PING_RECV_PERCENTAGE = 0.8;
+  // measured via diameter of tire with ruler.
+  // Based on a possibly not very accurate circumference measurement,
+  // this came out to be .137
   const double JAGUAR_WHEEL_RADIUS_M = 0.1325;
   static constexpr double JAGUAR_WHEEL_BASE_M = 0.35;
   static constexpr double JAGUAR_BASE_ENCODER_COUNTS_PER_REVOLUTION = 520.0;
@@ -926,6 +964,7 @@ private:
   std::promise<void>                                                      exit_signal_;
   std::shared_future<void>                                                future_;
   std::mutex                                                              motors_sensor_frame_mutex_;
+  std::mutex                                                              pose_mutex_;
   rclcpp::Publisher<sensor_msgs::msg::Imu>::SharedPtr                     imu_pub_;
   rclcpp::Publisher<sensor_msgs::msg::NavSatFix>::SharedPtr               navsat_pub_;
   rclcpp::Publisher<jaguar4x4_base_msgs::msg::Motors>::SharedPtr          motors_pub_;  // base motors
@@ -980,6 +1019,7 @@ private:
   std::atomic<int>                                                        travel_set_distance_total_ticks_{0};
   double                                                                  last_imu_ang_vel_z_{0.0};
   rclcpp::callback_group::CallbackGroup::SharedPtr                        joy_cb_grp_;
+  rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr                      reset_pose_srv_;
 };
 
 int main(int argc, char * argv[])

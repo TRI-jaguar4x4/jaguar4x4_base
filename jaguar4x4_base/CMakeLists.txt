@@ -22,6 +22,7 @@ find_package(nav_msgs REQUIRED)
 find_package(rclcpp REQUIRED)
 find_package(sensor_msgs REQUIRED)
 find_package(std_msgs REQUIRED)
+find_package(std_srvs REQUIRED)
 find_package(tf2 REQUIRED)
 find_package(tf2_ros REQUIRED)
 
@@ -35,6 +36,7 @@ ament_target_dependencies(jaguar4x4_base_node
   nav_msgs
   rclcpp
   std_msgs
+  std_srvs
   sensor_msgs
   tf2
   tf2_ros
