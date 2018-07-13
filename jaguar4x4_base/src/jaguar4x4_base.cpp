@@ -300,9 +300,9 @@ private:
     // Ported from: https://github.com/yujinrobot/kobuki_core/blob/devel/kobuki_driver/src/driver/diff_drive.cpp#L52
 
     // The Jaguar4x4 has the wheel encoders inverted
-    double right_diff_ticks = -motor_enc_pos_diff->pos_diff_2_;
+    double right_diff_ticks = -motor_enc_pos_diff->pos_diff_2_ * JAGUAR_RADIUS_ERROR_RIGHT;
 
-    double left_diff_ticks = motor_enc_pos_diff->pos_diff_1_;
+    double left_diff_ticks = motor_enc_pos_diff->pos_diff_1_ * JAGUAR_RADIUS_ERROR_LEFT;
 
     ecl::LegacyPose2D<double> pose_update = diff_drive_k_.forward(RADS_PER_TICK * left_diff_ticks,
                                                                   RADS_PER_TICK * right_diff_ticks);
@@ -937,10 +937,13 @@ private:
   static constexpr int GYRO_NUM_BIAS_SAMPLES_NEEDED = 100;
   static constexpr uint32_t VEHICLE_DYNAMICS_SETTLE_TIME_MS = 3000;
   const double JAGUAR_ENCODER_TICKS = 520.0;
-  const double JAGUAR_AXLE_LENGTH_M = 0.425;
+//  const double JAGUAR_AXLE_LENGTH_M = 0.425;
+    const double JAGUAR_AXLE_LENGTH_M = 0.466;
   const Point PWM_TO_SPEED_START_POINT_{0.8840964279, 500};
   const Point PWM_TO_SPEED_END_POINT_{0.1063000495, 95};
   const double JAGUAR_PI = 3.14159265;
+  const double JAGUAR_RADIUS_ERROR_LEFT = 0.98;
+  const double JAGUAR_RADIUS_ERROR_RIGHT = 1.0;
 
   // Constants calculated based on the tunable parameters above
   const double JAGUAR_TWO_PI = 2.0 * JAGUAR_PI;
