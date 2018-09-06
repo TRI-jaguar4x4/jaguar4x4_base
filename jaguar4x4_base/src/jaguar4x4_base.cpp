@@ -178,7 +178,7 @@ private:
           gyro_bias_y_ = gyro_bias_calc_.sum_y_ / gyro_bias_calc_.num_samples_;
           gyro_bias_z_ = gyro_bias_calc_.sum_z_ / gyro_bias_calc_.num_samples_;
           have_gyro_bias_ = true;
-          std::cerr << "Completed IMU bias: " << gyro_bias_z_ << std::endl;
+          RCLCPP_INFO(get_logger(), "Completed IMU bias: %d", gyro_bias_z_);
         }
       } else {
         gyro_bias_calc_.in_progress_ = true;
@@ -202,7 +202,7 @@ private:
     }
 
     if (curr_imu_time_ns < last_imu_time_ns_) {
-      std::cerr << "Out of order: curr " << curr_imu_time_ns << ", last: " << last_imu_time_ns_ << std::endl;
+      RCLCPP_INFO(get_logger(), "Out of order: curr %lu, last %lu", curr_imu_time_ns, last_imu_time_ns_);
       assert(false);
     }
 
@@ -312,7 +312,7 @@ private:
       last_diff_time_sec = (curr_timestamp_ns - last_timestamp_ns_) / 1000000000.0;
       last_timestamp_ns_ = curr_timestamp_ns;
     } else {
-      std::cerr << "BUGGGGG" << std::endl;
+      RCLCPP_INFO(get_logger(), "BUG, timestamp went backwards");
       assert(false);
     }
 
@@ -422,7 +422,7 @@ private:
       try {
         base_msg = base_recv_->getAndParseMessage();
       } catch (...) {
-        std::cerr << "threw\n";
+        RCLCPP_INFO(get_logger(), "getAndParseMessage threw");
       }
 
       if (base_msg) {
@@ -593,7 +593,7 @@ private:
       prior_pwm_left_ = 0.0;
       prior_pwm_right_ = 0.0;
 
-      std::cerr << "ESTOP" << std::endl;
+      RCLCPP_INFO(get_logger(), "ESTOP");
     } else {
       // Resume the robot.  We set eStopped to false, and then rely on the
       // pingThread to set accepting_commands to true as appropriate.
@@ -616,11 +616,11 @@ private:
       if (diff_ms.count() > WATCHDOG_INTERVAL_MS) {
         if (!e_stopped_ && have_gyro_bias_) {
           if (num_data_recvd_ < MIN_PINGS_EXPECTED) {
-            std::cerr << "Stopped accepting commands" << std::endl;
+            RCLCPP_INFO(get_logger(), "Stopped accepting commands");
             accepting_commands_ = false;
           } else {
             if (!accepting_commands_) {
-              std::cerr << "accepting commands" << std::endl;
+              RCLCPP_INFO(get_logger(), "accepting commands");
               base_cmd_->move(0, 0);
             }
             accepting_commands_ = true;
@@ -745,7 +745,7 @@ private:
           motors_pub_->publish(motors_pub_msg);
         }
       } else {
-        std::cerr << "unable to access time\n";
+        RCLCPP_INFO(get_logger(), "Unable to access time, skipping sensor frame update");
       }
 
       std::this_thread::sleep_for(std::chrono::milliseconds(MOTORS_PUB_TIMER_INTERVAL_MS));

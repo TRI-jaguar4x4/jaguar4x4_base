@@ -57,10 +57,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnIMUMsg(const std::string& 
                                     std::stol(sm[11])); // comp_z
   }
 
-  // FIXME: sometimes it fails to parse, we seem to be getting an overlapped message
-
-  std::cerr << "IMU Msg failed to parse: '" << msg << "' (" << dumpHex(msg) << ")" << std::endl;
-
   // If we got here, it failed to parse; just return empty
   return std::unique_ptr<AbstractBaseMsg>(nullptr);
 }
@@ -84,7 +80,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnGPSMsg(const std::string& 
       // this should never really happen; if it does, somehow we had an
       // invalid message *and* the regex above was wrong.  Log it, and
       // ignore the message.
-      std::cerr << "Invalid GPS status; expected A or V" << std::endl;
       return std::unique_ptr<AbstractBaseMsg>(nullptr);
     }
 
@@ -97,7 +92,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnGPSMsg(const std::string& 
       // this should never really happen; if it does, somehow we had an
       // invalid message *and* the regex above was wrong.  Log it, and
       // ignore the message.
-      std::cerr << "Invalid GPS latitude hemisphere; expected N or S" << std::endl;
       return std::unique_ptr<AbstractBaseMsg>(nullptr);
     }
 
@@ -110,7 +104,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnGPSMsg(const std::string& 
       // this should never really happen; if it does, somehow we had an
       // invalid message *and* the regex above was wrong.  Log it, and
       // ignore the message.
-      std::cerr << "Invalid GPS longitude hemisphere; expected E or W" << std::endl;
       return std::unique_ptr<AbstractBaseMsg>(nullptr);
     }
 
@@ -137,8 +130,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnGPSMsg(const std::string& 
                                     cog);
   }
 
-  std::cerr << "GPS Msg failed to parse: '" << msg << "' (" << dumpHex(msg) << ")" << std::endl;
-
   // If we got here, it failed to parse; just return empty
   return std::unique_ptr<AbstractBaseMsg>(nullptr);
 }
@@ -153,8 +144,6 @@ static std::unique_ptr<AbstractBaseMsg> parseAndReturnMotorMsg(const std::string
       return std::make_unique<MotorMsg>(std::stol(sm[1]), std::move(motor_msg));
     }
   }
-
-  std::cerr << "Motor Msg failed to parse: '" << msg << "' (" << dumpHex(msg) << ")" << std::endl;
 
   // If we got here, it failed to parse; just return empty
   return std::unique_ptr<AbstractBaseMsg>(nullptr);
@@ -176,8 +165,6 @@ std::unique_ptr<AbstractBaseMsg> BaseReceive::getAndParseMessage()
   } else if (startsWith(msg, "M")) {
     return parseAndReturnMotorMsg(msg);
   }
-
-  std::cerr << "UNKNOWN MESSAGE TYPE '"<< msg << "' (" << dumpHex(msg) << ")" << std::endl;
 
   return std::unique_ptr<AbstractBaseMsg>(nullptr);
 }
