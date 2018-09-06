@@ -1,5 +1,3 @@
-# Copyright 2018 Toyota Research Institute.  All rights reserved.
-
 uint8  TEST_MOTOR_FRONT_LEFT = 0
 uint8  TEST_MOTOR_FRONT_RIGHT = 1
 uint8  TEST_MOTOR_REAR_LEFT = 2

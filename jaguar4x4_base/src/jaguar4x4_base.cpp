@@ -1,6 +1,4 @@
-// Copyright 2018 Toyota Research Institute.  All rights reserved.
-//
-// IF WE RELEASE THIS CODE, WE MAY USE THE FOLLOWING BOILERPLATE:
+// Copyright 2018 Toyota Research Institute.
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -937,8 +935,7 @@ private:
   static constexpr int GYRO_NUM_BIAS_SAMPLES_NEEDED = 100;
   static constexpr uint32_t VEHICLE_DYNAMICS_SETTLE_TIME_MS = 3000;
   const double JAGUAR_ENCODER_TICKS = 520.0;
-//  const double JAGUAR_AXLE_LENGTH_M = 0.425;
-    const double JAGUAR_AXLE_LENGTH_M = 0.466;
+  const double JAGUAR_AXLE_LENGTH_M = 0.466;
   const Point PWM_TO_SPEED_START_POINT_{0.8840964279, 500};
   const Point PWM_TO_SPEED_END_POINT_{0.1063000495, 95};
   const double JAGUAR_PI = 3.14159265;
