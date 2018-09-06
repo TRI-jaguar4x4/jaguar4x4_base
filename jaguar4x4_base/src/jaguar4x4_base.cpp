@@ -551,10 +551,7 @@ private:
     int pwm_left = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::LEFT_WHEEL);
     int pwm_right = calcPWMFromTwistVels(msg->linear.x, msg->angular.z, Wheel::RIGHT_WHEEL);
 
-    std::stringstream ss;
-
-    ss << "Linear: " << msg->linear.x << ", angular: " << msg->angular.z << ", pwm_left: " << pwm_left << ", pwm_right: " << pwm_right;
-    RCLCPP_DEBUG(this->get_logger(), ss.str().c_str());
+    RCLCPP_DEBUG(get_logger(), "Linear: %f, angular: %f, PWM left: %d, PWM right: %d", msg->linear.x, msg->angular.z, pwm_left, pwm_right);
 
     if (prior_pwm_left_ != pwm_left || prior_pwm_right_ != pwm_right) {
       base_cmd_->move(pwm_left, -pwm_right);
@@ -569,6 +566,13 @@ private:
     // we use as "eStop the robot".  Button 10 is the Left Analog Stick press on
     // the joystick, which we use as "resume the robot".  We start out with the
     // robot in eStop, so you always must resume it to start using the robot.
+
+    if (msg->buttons.size() < 12) {
+      // When coming out of power-up, the joystick node sometimes publishes
+      // bogus default messages that don't have enough buttons.  Counteract
+      // that by only allowing this joy callback if there are enough buttons.
+      return;
+    }
 
     if (!msg->buttons[10] && !msg->buttons[11]) {
       return;
